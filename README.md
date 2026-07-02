@@ -202,6 +202,10 @@ qemu-system-aarch64 \
 
 [MIT License](LICENSE)
 
+## AI Disclosure
+
+This project was developed with the assistance of artificial intelligence tools. AI was used to aid in writing and debugging code, generating documentation, and reviewing implementation decisions. All code and design decisions were ultimately reviewed and approved by the human maintainer.
+
 ## Contributing
 
 Issues and pull requests are welcome! Please feel free to submit bug reports, feature requests, or patches.
