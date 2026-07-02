@@ -7,10 +7,24 @@
 
 #include <shlte/types.h>
 
+/* Buddy allocator constants */
+#define PAGE_SHIFT       12
+#define PAGE_SIZE        (1UL << PAGE_SHIFT)
+#define MAX_ORDER        10          /* 2^10 * 4KB = 4MB max allocation */
+#define ORDER0_SIZE      PAGE_SIZE
+
 /* Kernel heap allocation */
 void *kmalloc(size_t size);
 void kfree(void *ptr);
 void *krealloc(void *ptr, size_t new_size);
+size_t kmalloc_usable(void *ptr);
+
+/* Buddy system page allocator */
+int buddy_init(uintptr_t start, size_t total_pages);
+int alloc_pages(unsigned int order, uint64_t *phys_addr);
+void free_pages(uint64_t phys_addr, unsigned int order);
+size_t buddy_free_pages(void);
+size_t buddy_total_pages(void);
 
 /* Physical memory management */
 void *phys_alloc(size_t size);
