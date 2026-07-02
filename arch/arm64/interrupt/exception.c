@@ -4,6 +4,7 @@
 
 #include <shlte/types.h>
 #include <shlte/printk.h>
+#include <shlte/interrupt.h>
 
 /**
  * handle_exception - Common exception handler
