@@ -1,137 +1,65 @@
 # Shlte OS
 
-一个仿 Linux 内核的 ARM64 微操作系统。
+<div align="center">
 
-## 概述
+**An ARM64 microkernel operating system built from scratch**
 
-Shlte OS 是一个从零开始的 ARM64 微内核操作系统，具有以下特性：
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Architecture: ARM64](https://img.shields.io/badge/Architecture-ARM64-brightgreen.svg)]()
+[![Status: Early Development](https://img.shields.io/badge/Status-Early%20Development-orange.svg)]()
 
-- **ARM64 (AArch64)** 架构支持
-- **GRUB** 引导加载器
-- **MMU/页表管理** - 支持虚拟内存
-- **中断控制器** - GICv2/v3 支持
-- **内核打印** - 通过 UART 输出
-- **进程管理** - 基本进程创建和调度
-- **系统调用** - 用户态到内核态的接口
-- **根文件系统** - 基于 init 脚本和 sh/bash
+</div>
 
-## 项目结构
+---
 
-```
-shlte-os/
-├── Makefile              # 主构建文件
-├── linker.lds            # 内核链接脚本
-├── boot/
-│   └── boot.S            # 引导扇区（汇编入口）
-├── arch/
-│   └── arm64/
-│       ├── kernel.c      # 内核主入口
-│       ├── mm/
-│       │   └── mmu.c     # MMU/页表管理
-│       ├── interrupt/
-│       │   ├── interrupt.c   # GIC 中断控制器
-│       │   └── exception.c   # 异常处理
-│       └── fs/
-│           └── fs.c      # 文件系统接口
-├── lib/
-│   ├── printk.c          # 内核打印/UART 驱动
-│   ├── string.c          # 字符串/内存操作
-│   ├── mm.c              # 内存管理（简单分配器）
-│   ├── process.c         # 进程管理
-│   ├── syscall.c         # 系统调用
-│   ├── interrupt_dispatch.c  # IRQ 分发
-│   └── include/shlte/    # 内核头文件
-│       ├── types.h
-│       ├── printk.h
-│       ├── string.h
-│       ├── mm.h
-│       ├── interrupt.h
-│       ├── fs.h
-│       ├── stdio.h
-│       └── process.h
-├── rootfs/               # 根文件系统
-│   ├── bin/
-│   ├── sbin/
-│   ├── etc/
-│   │   ├── init.sh       # 初始化脚本
-│   │   ├── environment
-│   │   └── passwd
-│   ├── proc/
-│   ├── dev/
-│   └── tmp/
-├── scripts/
-│   └── build.sh          # 构建辅助脚本
-└── README.md
-```
+## Overview
 
-## 构建要求
+Shlte OS is a minimal ARM64 microkernel operating system written from the ground up. It features a GRUB bootloader, virtual memory with MMU/page tables, GIC interrupt handling, UART console I/O, basic process management, and a system call interface — all designed to run on QEMU's ARM64 virt machine.
 
-### 必需工具
+## Features
 
-- **GCC 交叉编译工具链** (aarch64-linux-gnu-)
-- **QEMU** (用于模拟运行)
-- **GNU Make**
+| Component | Status | Description |
+|-----------|--------|-------------|
+| Bootloader | ✅ | Assembly entry (`boot.S`) → C kernel transition |
+| MMU & Page Tables | ✅ | Virtual memory setup, BSS clearing, cache enable |
+| UART Console | ✅ | Kernel printf via PL011 UART |
+| Interrupt Controller | ✅ | GICv2/v3 distributor + CPU interface |
+| Exception Handling | ✅ | Synchronous, IRQ, FIQ vectors at EL1/EL0 |
+| Memory Allocator | ✅ | Simple bump allocator with page-level management |
+| Process Management | ✅ | Basic process creation and context |
+| System Calls | ✅ | User-to-kernel transition framework |
+| Root Filesystem | ✅ | initramfs with init script and shell |
 
-### 安装依赖 (Ubuntu/Debian)
+## Quick Start
+
+### Prerequisites
 
 ```bash
+# Ubuntu / Debian
 sudo apt update
 sudo apt install gcc-aarch64-linux-gnu qemu-system-arm make genisoimage
-```
 
-### 安装依赖 (Fedora/RHEL)
-
-```bash
+# Fedora / RHEL
 sudo dnf install aarch64-linux-gnu-gcc qemu-system-arm make cdrkit
-```
 
-### 安装依赖 (Arch Linux)
-
-```bash
+# Arch Linux
 sudo pacman -S gcc-aarch64-linux-gnu qemu make cdrkit
 ```
 
-## 构建
-
-### 完整构建（内核 + ISO）
+### Build & Run
 
 ```bash
-make
-```
-
-### 仅构建内核
-
-```bash
+# Build kernel binary
 make kernel
-```
 
-### 仅构建 ISO
-
-```bash
-make iso
-```
-
-### 清理
-
-```bash
-make clean
-```
-
-## 运行
-
-### 在 QEMU 中运行
-
-```bash
+# Run on QEMU
 make run
-```
 
-### 调试模式（等待 GDB 连接）
-
-```bash
+# Debug mode (wait for GDB connection)
 make debug
 ```
 
-然后在另一个终端连接 GDB：
+Then connect with GDB in another terminal:
 
 ```bash
 aarch64-linux-gnu-gdb build/kernel.elf
@@ -139,99 +67,145 @@ aarch64-linux-gnu-gdb build/kernel.elf
 (gdb) continue
 ```
 
-### 使用构建脚本
+Or use the convenience script:
 
 ```bash
-./scripts/build.sh build    # 构建
-./scripts/build.sh run      # 运行
-./scripts/build.sh debug    # 调试
-./scripts/build.sh clean    # 清理
+./scripts/build.sh build
+./scripts/build.sh run
+./scripts/build.sh debug
 ```
 
-## 技术细节
+## Architecture
 
-### 引导流程
-
-1. **QEMU** 加载 kernel.bin 到物理地址 0x80000
-2. **boot.S** 执行：
-   - 保存设备树指针
-   - 设置异常向量表
-   - 从 EL2 降级到 EL1
-   - 清除 BSS 段
-   - 启用 MMU 和缓存
-   - 跳转到 C 代码 `kernel_main()`
-3. **kernel.c** 执行：
-   - 打印内核横幅
-   - 初始化 MMU
-   - 初始化中断控制器
-   - 初始化文件系统
-   - 创建 init 进程
-4. **init.sh** 启动用户空间
-
-### 内存布局
+### Boot Sequence
 
 ```
-0x00000000          - 保留
-0x08000000          - GIC 寄存器 (virt machine)
-0x09000000          - UART (virt machine)
-0x00000080000       - 内核加载地址
-0x00000010000000    - 内核堆起始 (1MB)
+QEMU loads kernel.bin @ 0x80000
+    │
+    ▼
+boot.S (ARM64 assembly entry)
+    ├── Save device tree pointer
+    ├── Set up exception vector table
+    ├── EL2 → EL1 privilege drop
+    ├── Clear BSS segment
+    ├── Enable MMU & L1 data cache
+    ▼
+kernel_main() (C entry point)
+    ├── Print kernel banner via UART
+    ├── Initialize MMU / page tables
+    ├── Initialize GIC interrupt controller
+    ├── Initialize filesystem
+    ├── Initialize user space (usr_init)
+    └── Start init process → infinite WFI loop
 ```
 
-### 异常向量表
+### Memory Map
 
 ```
-EL1t:  同步、IRQ、FIQ、错误
-EL0t:  同步、IRQ、FIQ、错误
+Address          | Region
+-----------------+------------------------------------------
+0x00000000       | Reserved
+0x08000000       | GIC registers (virt machine)
+0x09000000       | UART (virt machine)
+0x00080000       | Kernel binary load address
+0x10000000       | Kernel heap start (16 MB)
 ```
 
-### 中断控制
+### Linker Script
 
-- **GICv2** 分发器和 CPU 接口
-- 支持 1020 个中断源
-- 动态注册/注销中断处理程序
+The kernel is linked at physical address `0x80000` with sections laid out as:
 
-## 当前状态
+```
+.text  →  .rodata  →  .data  →  .bss  →  __kernel_end
+```
 
-这是一个**早期开发版本**，以下功能为 stub/占位符：
+## Project Structure
 
-- [x] 内核入口和启动
-- [x] UART 输出
-- [x] 内核打印 (printk)
-- [x] MMU 初始化
-- [x] 页表管理（基本）
-- [x] GIC 中断控制器
-- [x] 异常处理
-- [x] 简单内存分配器
-- [x] 进程创建（基本）
-- [x] 系统调用框架
-- [x] 根文件系统
-- [ ] 真正的文件系统（ext2/squashfs）
-- [ ] 完整的进程调度
-- [ ] 用户态内存管理
-- [ ] 网络协议栈
-- [ ] 多核支持
-- [ ] 电源管理
+```
+shlte-os/
+├── Makefile              # Build system (kernel, run, debug, clean)
+├── linker.lds            # Kernel linker script
+├── boot/
+│   ├── boot.S            # Assembly entry point & early init
+│   └── grub/             # GRUB configuration (optional)
+├── arch/
+│   └── arm64/
+│       ├── kernel.c      # C kernel entry (kernel_main)
+│       ├── mm/           # MMU & page table management
+│       ├── interrupt/    # GIC driver & exception vectors
+│       └── fs/           # Filesystem interface
+├── lib/
+│   ├── printk.c          # UART console driver
+│   ├── string.c          # memcpy, memset, strcmp, etc.
+│   ├── mm.c              # Physical memory allocator
+│   ├── process.c         # Process management
+│   ├── syscall.c         # System call handler
+│   ├── interrupt_dispatch.c  # IRQ routing
+│   └── include/shlte/    # Kernel headers
+├── rootfs/               # initramfs contents
+│   ├── etc/init.sh       # Init script
+│   └── ...
+├── scripts/
+│   └── build.sh          # Convenience build wrapper
+└── README.md
+```
 
-## 未来计划
+## Development Roadmap
 
-- 实现 ext2 文件系统支持
-- 添加网络协议栈（TCP/IP）
-- 支持更多 ARM64 平台（Not-So-Virtual、Real hardware）
-- 实现用户态 C 库
-- 添加动态链接器
-- 实现信号机制
-- 添加 IPC（进程间通信）
-- 支持容器化
+### Completed ✅
+- [x] Kernel entry & boot sequence
+- [x] UART printk console
+- [x] MMU initialization & page tables
+- [x] GICv2/v3 interrupt controller
+- [x] Exception vector table (EL1/EL0)
+- [x] Simple physical memory allocator
+- [x] Basic process creation
+- [x] System call framework
+- [x] Root filesystem (initramfs)
 
-## 许可证
+### Planned 🚧
+- [ ] ext2 / squashfs filesystem driver
+- [ ] Full round-robin scheduler
+- [ ] User-space memory management (mmap, brk)
+- [ ] TCP/IP network stack
+- [ ] SMP / multi-core support
+- [ ] Power management (PSCI)
+- [ ] Signal handling
+- [ ] Inter-process communication (IPC)
 
-MIT License
+## Build Targets
 
-## 贡献
+| Target | Description |
+|--------|-------------|
+| `make` / `make kernel` | Build kernel binary (`build/kernel.bin`) |
+| `make iso` | Build bootable ISO (placeholder for ARM64) |
+| `make run` | Build & launch on QEMU (nographic) |
+| `make debug` | Build & launch with GDB server on `:1234` |
+| `make clean` | Remove all build artifacts |
+| `make help` | Show build help |
 
-欢迎提交 Issue 和 Pull Request！
+## QEMU Run Command
+
+Under the hood, Shlte OS runs on QEMU with these parameters:
+
+```bash
+qemu-system-aarch64 \
+    -M virt -cpu cortex-a53 \
+    -m 512M \
+    -bios none \
+    -kernel build/kernel.bin \
+    -serial stdio \
+    -nographic
+```
+
+## License
+
+[MIT License](LICENSE)
+
+## Contributing
+
+Issues and pull requests are welcome! Please feel free to submit bug reports, feature requests, or patches.
 
 ---
 
-**Shlte OS** - 从零开始的 ARM64 操作系统
+**Shlte OS** — An ARM64 microkernel, built from scratch.
