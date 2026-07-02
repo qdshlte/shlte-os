@@ -27,32 +27,38 @@
 #define PF_NG      (1 << 11)
 
 /* Page sizes */
-#define PAGE_SIZE      4096
-#define BLOCK_SIZE     (512 * 1024)   /* 512KB block */
-#define LARGE_BLOCK    (1 << 30)      /* 1GB large block */
+#define PAGE_SIZE       4096
+#define BLOCK_SIZE_2MB  (2 * 1024 * 1024)
+#define LARGE_BLOCK_1GB (1ULL << 30)
 
 /* TTBR (Translation Table Base Register) */
-#define TTBR_CNP      (1 << 11)
+#define TTBR_CNP        (1 << 11)
 
 /* CR (Control Register) bits */
 #define CR_MMU_ENABLE    (1 << 0)
 #define CR_DCACHE_ENABLE (1 << 1)
 #define CR_ICACHE_ENABLE (1 << 12)
 
-/* Level 1 block mapping (1GB) - kept for future use */
-static uint64_t pt_block_1gb(void)
+/*
+ * mmu_enable - Called from boot.S to initialize and enable the MMU.
+ * This function sets up page tables, loads TTBR, enables the MMU,
+ * and then calls kernel_main(). It does NOT loop forever — it
+ * returns after kernel_main() exits (which should never happen).
+ */
+void mmu_enable(void)
 {
-    uint64_t attr = ATTR_NORMAL_WB;
-    return (attr << 2) | PF_VALID | PF_AF | PF_NG | (1ULL << 54) | (3ULL << 8);
-}
+    mmu_init(0);
 
-/* Level 3 table entry (4KB page) - kept for future use */
-static uint64_t pt_page_4k(uint64_t phys, int attrs)
-{
-    uint64_t entry = phys | PF_VALID | PF_AF;
-    entry |= ((uint64_t)(attrs & 0xF)) << 2;
-    entry |= (1ULL << 54);  /* Non-shareable */
-    return entry;
+    /* Print banner AFTER MMU is enabled so output uses virtual addresses */
+    printk("[BOOT] MMU enabled, entering kernel_main...\n");
+
+    extern void kernel_main(uint64_t dtb);
+    kernel_main(0);
+
+    /* If kernel_main ever returns, halt */
+    printk("[FATAL] mmu_enable: kernel_main returned!\n");
+    for (;;)
+        __asm__ volatile("wfi");
 }
 
 /*
@@ -63,13 +69,9 @@ static uint64_t pt_page_4k(uint64_t phys, int attrs)
  * Level 3: 512 x 4KB pages    -> offset 26-32
  */
 
-/*
- * Simple 2-level page table:
- * - Level 0: 512 entries (each points to a level-1 table)
- * - Level 1 block: 512KB blocks (for simplicity)
- *
- * For a minimal kernel, we use a 1GB block mapping at level 1.
- */
+/* Translation tables (physically contiguous, aligned) */
+static uint64_t __attribute__((aligned(0x400000))) pt_table_l0[512];
+static uint64_t __attribute__((aligned(0x4000))) pt_table_l1[512];
 
 /*
  * Map 2MB pages (level 1 block)
@@ -77,35 +79,24 @@ static uint64_t pt_page_4k(uint64_t phys, int attrs)
  */
 static uint64_t pt_block_2mb(uint64_t phys_addr, int mem_attr)
 {
-    uint64_t entry = phys_addr & ~0xFFF;  /* Align to 2MB */
+    uint64_t entry = phys_addr & ~0x1FFFFF;  /* Align to 2MB boundary */
     entry |= ((uint64_t)(mem_attr & 0xF)) << 2;
     entry |= (1ULL << 0) | (1ULL << 1) | (1ULL << 10) | (3ULL << 8); /* V|AF|IB|SH=inner*/
     return entry;
 }
 
 /*
- * mmu_enable - Wrapper called from boot.S
- * Initializes MMU and jumps to kernel_main after setup.
+ * mmu_init - Set up page tables and enable the MMU.
+ * Called ONCE from mmu_enable() during early boot.
+ * After this function returns, the MMU is enabled and all
+ * memory accesses use virtual addresses.
+ *
+ * NOTE: kernel_main() must NOT call mmu_init() again — the MMU
+ * is already enabled by the time kernel_main() runs.
  */
-void mmu_enable(void)
-{
-    mmu_init(0);  /* DTB pointer not available yet, pass 0 */
-    
-    /* Jump to kernel entry */
-    extern void kernel_main(uint64_t dtb);
-    kernel_main(0);
-    
-    /* Should never return */
-    for (;;);
-}
-
-/* Translation tables (physically contiguous) */
-static uint64_t __attribute__((aligned(0x400000))) pt_table_l0[512];
-static uint64_t __attribute__((aligned(0x4000))) pt_table_l1[512];
-
 void mmu_init(uint64_t dtb_phys)
 {
-    (void)dtb_phys; /* DTB pointer not yet needed */
+    (void)dtb_phys;
     int i;
 
     /* Clear page tables */
@@ -124,13 +115,9 @@ void mmu_init(uint64_t dtb_phys)
 
     /* Map 0x0 - 0x40000000 (1GB) with 2MB blocks */
     for (i = 0; i < 512; i++) {
-        uint64_t phys = (uint64_t)i * (2 * 1024 * 1024);
+        uint64_t phys = (uint64_t)i * BLOCK_SIZE_2MB;
         pt_table_l1[i] = pt_block_2mb(phys, ATTR_NORMAL_WB);
     }
-
-    /* Map device memory at 0x30000000 (GIC, UART, etc.) */
-    /* This is at L1 index 0x18000000 / 0x200000 = 384 */
-    /* For simplicity, map a region as device memory */
 
     /* Load TTBR0 (EL0/EL1 translation table base) */
     __asm__ volatile(
@@ -138,6 +125,14 @@ void mmu_init(uint64_t dtb_phys)
         "isb\n\t"
         : : "r" ((uint64_t)&pt_table_l0)
         : "memory"
+    );
+
+    /* Invalidate TLB before enabling MMU to clear stale entries */
+    __asm__ volatile(
+        "tlbi vmalle1is\n\t"
+        "dsb nsh\n\t"
+        "isb\n\t"
+        ::: "memory"
     );
 
     /* Enable MMU and caches */

@@ -20,7 +20,7 @@
 static void uart_wait_tx_empty(void)
 {
     volatile uint32_t *uart_fr = (volatile uint32_t *)(UART_BASE + UART_FR);
-    while (*uart_fr & 0x20) {  /* TXFE bit */
+    while (*uart_fr & UART_FR_TXFE) {  /* TXFE bit */
         /* Busy wait */
     }
 }
@@ -31,7 +31,7 @@ static void uart_wait_tx_empty(void)
 static void uart_wait_tx_fifo_empty(void)
 {
     volatile uint32_t *uart_fr = (volatile uint32_t *)(UART_BASE + UART_FR);
-    while (*uart_fr & 0x30) {  /* TXFE | TXFF */
+    while (*uart_fr & (UART_FR_TXFE | UART_FR_TXFF)) {  /* TXFE | TXFF */
         /* Busy wait */
     }
 }
@@ -393,4 +393,23 @@ int printk(const char *fmt, ...)
 
     uart_puts(buf);
     return ret;
+}
+
+/**
+ * panic - Kernel panic with halt
+ * @msg: Panic message
+ *
+ * Prints a panic message and halts the system. Never returns.
+ */
+void panic(const char *msg)
+{
+    printk("\n");
+    printk("************************ PANIC ************************\n");
+    printk("PANIC: %s\n", msg);
+    printk("************************************************************\n");
+    printk("System halted.\n\n");
+
+    for (;;) {
+        __asm__ volatile("wfi");
+    }
 }
