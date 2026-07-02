@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(chmod *)",
+      "Agent(Explore)",
+      "Bash(rm *)",
+      "Bash(make *)",
+      "Bash(aarch64-linux-gnu-gcc *)",
+      "Bash(git init)",
+      "Bash(git add *)",
+      "Bash(git commit *)"
+    ]
+  },
+  "$version": 4
+}

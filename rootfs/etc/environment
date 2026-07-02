@@ -1,0 +1,6 @@
+# Shlte OS Environment
+HOME=/root
+SHELL=/bin/sh
+PATH=/bin:/sbin:/usr/bin:/usr/sbin
+TERM=linux
+HOSTNAME=shlte-os
