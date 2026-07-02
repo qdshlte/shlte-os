@@ -5,6 +5,7 @@
 #include <shlte/types.h>
 #include <shlte/mm.h>
 #include <shlte/printk.h>
+#include <shlte/mmu.h>
 
 /* ARM64 page table entry flags */
 #define PT_BLOCK     0x0
