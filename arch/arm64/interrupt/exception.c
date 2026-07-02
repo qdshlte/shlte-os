@@ -25,11 +25,13 @@ void handle_exception(uint64_t esr, uint64_t far, uint64_t sp)
         break;
     case 0x15:  /* IL - Instruction Abort (EL1) */
     case 0x16:  /* IABT lower */
-        printk("[EXC] Instruction abort\n");
+        printk("[EXC] Instruction abort at 0x%lx\n", far);
+        panic("Instruction abort exception");
         break;
     case 0x22:  /* DABT lower (Data Abort) */
     case 0x23:  /* DABT EL1 */
         printk("[EXC] Data abort at 0x%lx\n", far);
+        panic("Data abort exception");
         break;
     case 0x24:  /* IRQ */
         printk("[EXC] IRQ\n");
@@ -43,7 +45,6 @@ void handle_exception(uint64_t esr, uint64_t far, uint64_t sp)
         break;
     }
 
-    /* For now, just print and continue.
-     * In production, this would panic or kill the process. */
-    printk("[EXC] Continuing after exception...\n");
+    /* For fatal exceptions (abort), panic() never returns.
+     * For recoverable exceptions (IRQ, FIQ, unknown), just return. */
 }

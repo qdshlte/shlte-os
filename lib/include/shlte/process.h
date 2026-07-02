@@ -24,7 +24,7 @@ typedef struct process {
     char name[16];
     uint64_t stack[1024];  /* Kernel stack */
     uint64_t *user_stack;
-    uint64_t regs[30];     /* Saved registers */
+    uint64_t regs[31];     /* Saved registers x0-x30 */
     uint64_t entry;        /* Entry point */
     void *user_space;      /* User space memory */
     size_t user_space_size;

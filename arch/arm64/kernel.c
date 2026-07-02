@@ -31,10 +31,10 @@ void kernel_main(uint64_t dtb_ptr)
     printk("========================================\n");
     printk("\n");
 
-    /* Initialize memory management (MMU, page tables) */
-    printk("[INIT] Initializing memory management...\n");
-    mmu_init(dtb_ptr);
-    printk("[INIT] Memory management initialized.\n");
+    /*
+     * NOTE: MMU is already enabled by mmu_enable() → mmu_init()
+     * which was called from boot.S. Do NOT call mmu_init() again.
+     */
 
     /* Initialize interrupt controller (GIC) */
     printk("[INIT] Initializing interrupt subsystem...\n");
