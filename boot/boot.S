@@ -1,16 +1,19 @@
-/* ============================================================
- * External function declarations
- * ============================================================ */
-    .globl mmu_enable
-    .globl handle_exception
-    .globl kernel_main
-
 /*
  * boot/boot.S - ARM64 Boot Sector / Kernel Entry Point
  *
  * This is the very first code that runs when the kernel loads.
  * It sets up basic CPU state before handing off to C code.
  */
+
+/* ============================================================
+ * External function declarations
+ * ============================================================ */
+    .globl mmu_enable
+    .globl handle_exception
+    .globl kernel_main
+    .globl early_uart_init
+    .globl early_putchar
+    .globl early_putstr
 
     .section .text._start
     .globl _start
@@ -24,6 +27,15 @@ _start:
      * - MMU off, D-cache off, I-cache unknown
      * - EL2 or EL1 (depending on firmware)
      */
+
+    /* Set up a minimal stack early (before EL1 setup) */
+    ldr     x1, =boot_stack_bottom
+    msr     SPSEL, x1            /* SPSel: select SP_EL0 temporarily */
+
+    /* Initialize UART BEFORE anything else */
+    bl      early_uart_init
+    ldr     x0, =early_msg1
+    bl      early_putstr
 
     /* Save device tree pointer */
     mov     x20, x0              /* x20 = dtb pointer */
@@ -41,6 +53,10 @@ _start:
     ldr     x1, =boot_stack_top
     msr     SPSEL, x1            /* SPSel: select SP_EL1 */
 
+    /* Signal: EL1 stack ready */
+    ldr     x0, =early_msg2
+    bl      early_putstr
+
     /*
      * If we're in EL2, downgrade to EL1
      * Clear HCR_EL2.E2E (EL1 uses little-endian)
@@ -49,6 +65,10 @@ _start:
     mrs     x1, CurrentEL
     cmp     x1, #4               /* CurrentEL == EL2? */
     bne     1f                   /* No, skip EL2 setup */
+
+    /* Signal: EL2 detected */
+    ldr     x0, =early_msg3
+    bl      early_putstr
 
     /* EL2 -> EL1 transition */
     mrs     x0, SCR_EL3
@@ -59,6 +79,10 @@ _start:
 
     msr     SPSR_EL2, xzr        /* Return to EL1, AArch64 */
     eret                         /* Return to EL1 */
+
+    /* Signal: EL1 entered */
+    ldr     x0, =early_msg4
+    bl      early_putstr
 
 1:
     /*
@@ -74,6 +98,10 @@ _start:
     b.gt    3b
 2:
     bgt     3b
+
+    /* Signal: BSS cleared */
+    ldr     x0, =early_msg5
+    bl      early_putstr
 
     /*
      * Enable MMU and caches
@@ -200,3 +228,113 @@ boot_stack_bottom:
 
     .globl boot_stack_top
 boot_stack_top:
+
+/* ============================================================
+ * Early UART helpers (before MMU setup)
+ * ============================================================ */
+    .section .text.early_uart
+    .align 2
+
+/*
+ * early_uart_init - Initialize PL011 UART at 0x09000000
+ */
+    .globl early_uart_init
+early_uart_init:
+    mov     x0, #0x09000000
+
+    /* Wait for UART busy */
+1:
+    ldr     w1, [x0, #0x18]
+    tbz     w1, 3, 1b          /* Wait until !BUSY */
+
+    /* Disable UART before config */
+    str     wzr, [x0, #0x30]
+
+    /* Clear interrupts */
+    str     wzr, [x0, #0x3C]
+    str     xzr, [x0, #0x4C]
+
+    /* Enable UART, TX, RX */
+    mov     w1, #(1 << 0) | (1 << 8) | (1 << 9)  /* UARTEN | RXE | TXE */
+    str     w1, [x0, #0x30]
+
+    ret
+
+/*
+ * early_putchar - Output a single character to UART
+ * x0 = character to print
+ */
+    .globl early_putchar
+early_putchar:
+    mov     x1, #0x09000000
+    /* Wait for TX FIFO full */
+1:
+    ldr     w2, [x1, #0x18]
+    and     w2, w2, #(1 << 5)  /* FR_TXFF */
+    cbnz    w2, 1b
+
+    /* Handle newline: send CR first */
+    cmp     w0, #'\n'
+    bne     2f
+    /* Send CR */
+    mov     x3, #0x09000000
+2:
+1:
+    ldr     w2, [x3, #0x18]
+    and     w2, w2, #(1 << 5)
+    cbnz    w2, 1b
+    str     wzr, [x3, #0x00]
+    /* Fall through to send the actual char */
+
+    /* Wait for TX FIFO not full */
+2:
+1:
+    ldr     w2, [x1, #0x18]
+    and     w2, w2, #(1 << 5)
+    cbnz    w2, 1b
+
+    /* Send character */
+    str     w0, [x1, #0x00]
+    ret
+
+/*
+ * early_putstr - Output a null-terminated string
+ * x0 = string pointer (physical address, before MMU)
+ */
+    .globl early_putstr
+early_putstr:
+    mov     x1, x0
+1:
+    ldrb    w2, [x1], #1
+    cbz     w2, 2f
+    mov     x0, x2
+    bl      early_putchar
+    b       1b
+2:
+    ret
+
+/* ============================================================
+ * Boot messages (in .rodata, accessible before MMU)
+ * ============================================================ */
+    .section .rodata
+    .align 2
+
+    .globl early_msg1
+early_msg1:
+    .ascii  "[BOOT] Initializing...\n"
+
+    .globl early_msg2
+early_msg2:
+    .ascii  "[BOOT] Stack setup done\n"
+
+    .globl early_msg3
+early_msg3:
+    .ascii  "[BOOT] EL2 detected, downgrading...\n"
+
+    .globl early_msg4
+early_msg4:
+    .ascii  "[BOOT] Running at EL1\n"
+
+    .globl early_msg5
+early_msg5:
+    .ascii  "[BOOT] BSS cleared, about to enable MMU\n"

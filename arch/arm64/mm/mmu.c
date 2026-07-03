@@ -150,6 +150,14 @@ void mmu_init(uint64_t dtb_phys)
         : "memory"
     );
 
+    /* Full cache maintenance after enabling caches */
+    __asm__ volatile(
+        "dc cisw, xzr\n\t"   /* Clean D-cache by VA to PoU */
+        "dsb nsh\n\t"
+        "isb\n\t"
+        ::: "memory"
+    );
+
     printk("[MMU] Enabled, TTBR0=%p\n", (void*)&pt_table_l0);
 }
 
