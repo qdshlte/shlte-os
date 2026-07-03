@@ -11,51 +11,80 @@
 #include <shlte/string.h>
 
 /* ============================================================
- * UART Driver
+ * UART Driver - ARM PL011 for virt machine
  * ============================================================ */
 
+/* Global UART base pointer (set by uart_init) */
+static volatile uint32_t *uart_base = NULL;
+
 /**
- * uart_wait_tx_empty - Wait until UART transmit holding register is empty
+ * uart_read - Read a value from a UART register
+ * @reg: Register offset in bytes
  */
-static void uart_wait_tx_empty(void)
+static inline uint32_t uart_read(volatile uint32_t *uart, int reg)
 {
-    volatile uint32_t *uart_fr = (volatile uint32_t *)(UART_BASE + UART_FR);
-    while (*uart_fr & UART_FR_TXFE) {  /* TXFE bit */
-        /* Busy wait */
-    }
+    return uart[reg >> 2];
 }
 
 /**
- * uart_wait_tx_fifo_empty - Wait until UART transmit FIFO is empty
+ * uart_write - Write a value to a UART register
+ * @uart: UART base pointer
+ * @reg: Register offset in bytes
+ * @val: Value to write
  */
-static void uart_wait_tx_fifo_empty(void)
+static inline void uart_write(volatile uint32_t *uart, int reg, uint32_t val)
 {
-    volatile uint32_t *uart_fr = (volatile uint32_t *)(UART_BASE + UART_FR);
-    while (*uart_fr & (UART_FR_TXFE | UART_FR_TXFF)) {  /* TXFE | TXFF */
-        /* Busy wait */
-    }
+    uart[reg >> 2] = val;
 }
+
+/* PL011 UART register offsets */
+#define UART_DR     0x000   /* Data Register */
+#define UART_RSR    0x004   /* Receive Status Register */
+#define UART_ECR     0x00C   /* Error Clear Register */
+#define UART_FR     0x018   /* Flag Register */
+#define UART_CR     0x030   /* Control Register */
+#define UART_IMSC   0x03C   /* Interrupt Mask Set/Clear Register */
+#define UART_RIS    0x040   /* Raw Interrupt Status */
+#define UART_MIS    0x044   /* Masked Interrupt Status */
+#define UART_ICR    0x04C   /* Interrupt Clear Register */
+
+/* UART Flag Register (FR) bit masks */
+#define UART_FR_TXFE     (1 << 7)  /* Tx FIFO Empty */
+#define UART_FR_RXFE     (1 << 4)  /* Rx FIFO Empty */
+#define UART_FR_TXFF     (1 << 5)  /* Tx FIFO Full */
+#define UART_FR_RXFF     (1 << 6)  /* Rx FIFO Full */
+#define UART_FR_BUSY     (1 << 3)  /* UART Busy */
+
+/* UART Control Register (CR) bit masks */
+#define UART_CR_UARTEN   (1 << 0)  /* UART Enable */
+#define UART_CR_TXE      (1 << 9)  /* Tx Enable */
+#define UART_CR_RXE      (1 << 8)  /* Rx Enable */
+#define UART_CR_CTSEn    (1 << 10) /* CTS Enable */
+#define UART_CR_RTSDEn   (1 << 9)  /* RTS Delay Enable */
 
 /**
  * uart_init - Initialize UART for output
+ * Must be called BEFORE any printk() usage
  */
 void uart_init(void)
 {
-    volatile uint32_t *uart_cr = (volatile uint32_t *)(UART_BASE + UART_CR);
+    uart_base = (volatile uint32_t *)UART_BASE;
 
-    /* Disable UART first */
-    *uart_cr = 0;
+    /* Wait for UART busy */
+    while (uart_read(uart_base, UART_FR) & UART_FR_BUSY) {
+        /* Busy wait */
+    }
 
-    /* Set baud rate divisor (115200 bps default) */
-    /* For 1MHz UART clock, DIV = UARTCLK / (16 * BAUD) = 1000000 / (16 * 115200) ≈ 0.54 */
-    /* Use default divisor of 0 for simplicity */
-    volatile uint32_t *uart_ibrd = (volatile uint32_t *)(UART_BASE + 0x24);
-    volatile uint32_t *uart_fbrd = (volatile uint32_t *)(UART_BASE + 0x28);
-    *uart_ibrd = 0;
-    *uart_fbrd = 0;
+    /* Disable UART before configuring */
+    uart_write(uart_base, UART_CR, 0);
+
+    /* Clear interrupts */
+    uart_write(uart_base, UART_IMSC, 0);
+    uart_write(uart_base, UART_ICR, 0x7FF);
 
     /* Enable UART, TX, RX */
-    *uart_cr = UART_CR_UARTEN | UART_CR_TXE | UART_CR_RXE;
+    uart_write(uart_base, UART_CR,
+               UART_CR_UARTEN | UART_CR_TXE | UART_CR_RXE);
 }
 
 /**
@@ -63,15 +92,26 @@ void uart_init(void)
  */
 void uart_putc(char c)
 {
-    if (c == '\n') {
-        uart_wait_tx_empty();
-        volatile uint32_t *uart_dr = (volatile uint32_t *)(UART_BASE + UART_DR);
-        *uart_dr = '\r';
+    if (!uart_base) {
+        uart_init();
     }
 
-    uart_wait_tx_empty();
-    volatile uint32_t *uart_dr = (volatile uint32_t *)(UART_BASE + UART_DR);
-    *uart_dr = c;
+    /* Wait until Tx FIFO is not full */
+    while (uart_read(uart_base, UART_FR) & UART_FR_TXFF) {
+        /* Busy wait */
+    }
+
+    /* Handle newline: send carriage return first */
+    if (c == '\n') {
+        /* Wait again for Tx FIFO not full for CR */
+        while (uart_read(uart_base, UART_FR) & UART_FR_TXFF) {
+            /* Busy wait */
+        }
+        uart_write(uart_base, UART_DR, '\r');
+    }
+
+    /* Send character */
+    uart_write(uart_base, UART_DR, (uint32_t)c);
 }
 
 /**
@@ -90,12 +130,16 @@ void uart_puts(const char *s)
  */
 char uart_getc(void)
 {
-    volatile uint32_t *uart_fr = (volatile uint32_t *)(UART_BASE + UART_FR);
-    while (*uart_fr & 0x10) {  /* RXFE */
-        /* Wait */
+    if (!uart_base) {
+        uart_init();
     }
-    volatile uint32_t *uart_dr = (volatile uint32_t *)(UART_BASE + UART_DR);
-    return (char)(*uart_dr & 0xFF);
+
+    /* Wait until Rx FIFO is not empty */
+    while (uart_read(uart_base, UART_FR) & UART_FR_RXFE) {
+        /* Busy wait */
+    }
+
+    return (char)uart_read(uart_base, UART_DR);
 }
 
 /**
@@ -104,12 +148,16 @@ char uart_getc(void)
  */
 int uart_getc_nonblock(void)
 {
-    volatile uint32_t *uart_fr = (volatile uint32_t *)(UART_BASE + UART_FR);
-    if (*uart_fr & 0x10) {  /* RXFE */
+    if (!uart_base) {
+        uart_init();
+    }
+
+    /* Check if Rx FIFO is empty */
+    if (uart_read(uart_base, UART_FR) & UART_FR_RXFE) {
         return -1;
     }
-    volatile uint32_t *uart_dr = (volatile uint32_t *)(UART_BASE + UART_DR);
-    return (int)(*uart_dr & 0xFF);
+
+    return (int)uart_read(uart_base, UART_DR);
 }
 
 /* ============================================================
@@ -140,17 +188,20 @@ static void format_number(char *buf, size_t bufsize, uint64_t value, int base, i
     char digits[] = "0123456789abcdef";
     char *p = buf;
     char *start = buf;
-    int need_prefix = 0;
-    char prefix[2] = {0};
-    int digit_count = 0;
 
     /* Handle 0 */
     if (value == 0 && precision <= 0) {
         if (is_signed && sign) {
-            prefix[0] = (sign == '-') ? '-' : '+';
+            buf[0] = (sign == '-') ? '-' : '+';
+            buf[1] = '0';
+            buf[2] = '\0';
+            return;
         } else if (flags & F_HASH && base == 16) {
-            prefix[0] = '0';
-            prefix[1] = 'x';
+            buf[0] = '0';
+            buf[1] = 'x';
+            buf[2] = '0';
+            buf[3] = '\0';
+            return;
         }
         *p++ = '0';
         goto done;
@@ -160,7 +211,6 @@ static void format_number(char *buf, size_t bufsize, uint64_t value, int base, i
     while (value > 0) {
         *p++ = digits[value % base];
         value /= base;
-        digit_count++;
     }
 
     /* Reverse digits */
