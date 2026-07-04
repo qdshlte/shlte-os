@@ -1,0 +1,40 @@
+#!/bin/sh
+SAP_DIR="/mnt/var/sap"
+PACKAGES_DIR="${SAP_DIR}/packages"
+FILES_DIR="${SAP_DIR}/files"
+case "${1:-help}" in
+    list|ls)
+        count=0
+        for p in "$PACKAGES_DIR"/*; do
+            [ -f "$p" ] || continue
+            n=$(basename "$p"); v=$(grep "^VERSION=" "$p" 2>/dev/null | cut -d= -f2)
+            f=$(grep "^FILES=" "$p" 2>/dev/null | cut -d= -f2)
+            printf "  %-20s v%-10s %s files\n" "$n" "${v:-?}" "${f:-?}"
+            count=$((count+1))
+        done
+        [ "$count" -eq 0 ] && echo "No packages installed." ;;
+    install|i)
+        pkg="$2"; [ ! -f "$pkg" ] && echo "Not found: $pkg" && exit 1
+        name=$(basename "$pkg" | sed 's/\.deb.*//')
+        echo "Installing $name..."
+        mkdir -p /tmp/_sap/data
+        cd /tmp/_sap && ar x "$pkg" 2>/dev/null
+        [ -f data.tar.gz ] && gunzip data.tar.gz 2>/dev/null
+        [ -f data.tar ] && tar xf data.tar -C data 2>/dev/null
+        > "$FILES_DIR/$name"
+        find data -type f 2>/dev/null | while read f; do
+            r="${f#data/}"; mkdir -p "/mnt/$(dirname $r)" 2>/dev/null
+            cp "$f" "/mnt/$r" 2>/dev/null && echo "$r" >> "$FILES_DIR/$name"
+        done
+        echo "PACKAGE=$name\nVERSION=1.0\nFILES=$(wc -l < "$FILES_DIR/$name" 2>/dev/null)" > "$PACKAGES_DIR/$name"
+        rm -rf /tmp/_sap ;;
+    remove|rm)
+        [ ! -f "$PACKAGES_DIR/$2" ] && echo "Not installed." && exit 1
+        while read f; do rm -f "/mnt/$f" 2>/dev/null; done < "$FILES_DIR/$2"
+        rm -f "$FILES_DIR/$2" "$PACKAGES_DIR/$2"; echo "Removed." ;;
+    info|show)
+        [ ! -f "$PACKAGES_DIR/$2" ] && echo "Not installed." && exit 1
+        cat "$PACKAGES_DIR/$2"; wc -l < "$FILES_DIR/$2" 2>/dev/null | xargs echo "Files:" ;;
+    files) cat "$FILES_DIR/$2" 2>/dev/null | while read f; do echo "  /$f"; done ;;
+    *) echo "sap: install|remove|list|info|files <pkg>";;
+esac

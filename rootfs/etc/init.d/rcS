@@ -1,0 +1,4 @@
+#!/bin/sh
+echo "[INIT] Shlte OS boot..."
+mkdir -p /mnt/var/sap/packages /mnt/var/sap/files /mnt/var/sap/pool 2>/dev/null
+[ -x /usr/bin/sap ] && /usr/bin/sap list 2>/dev/null

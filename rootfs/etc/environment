@@ -1,0 +1,5 @@
+HOME=/root
+SHELL=/bin/sh
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+TERM=linux
+HOSTNAME=shlte-os
