@@ -33,7 +33,8 @@ CFLAGS := -std=c11 -ffreestanding -fno-builtin -nostdlib -nostartfiles \
           -fno-stack-protector -fno-pic \
           -mgeneral-regs-only \
           -I$(PWD)/arch/$(ARCH)/include \
-          -I$(PWD)/lib/include
+          -I$(PWD)/lib/include \
+          -I$(PWD)/boot/include
 
 ASFLAGS := -march=armv8-a \
            -I$(PWD)/boot/include \
@@ -111,6 +112,12 @@ $(BUILD_DIR)/%.o: arch/$(ARCH)/%.S
 	@mkdir -p $(dir $@)
 	@echo "[AS] $<"
 	$(AS) $(ASFLAGS) -o $@ $<
+
+# EFI stub compiled without -mgeneral-regs-only (UEFI uses SIMD)
+$(BUILD_DIR)/efi_main.o: boot/efi_main.c
+	@mkdir -p $(dir $@)
+	@echo "[CC EFI] $<"
+	$(CC) $(filter-out -mgeneral-regs-only,$(CFLAGS)) -c -o $@ $<
 
 # Boot .c files
 $(BUILD_DIR)/%.o: boot/%.c
