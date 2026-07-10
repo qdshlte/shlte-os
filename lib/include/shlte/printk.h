@@ -7,16 +7,24 @@
 
 #include <shlte/types.h>
 
-/* UART base address for ARM64 virt machine */
+/* UART base address */
+#if defined(__aarch64__)
+#define UART_BASE  0x09000000      /* ARM64 virt PL011 */
+#elif defined(__x86_64__)
+#define UART_BASE  0x3F8           /* x86_64 COM1 */
+#else
 #define UART_BASE  0x09000000
+#endif
 
 /* UART registers (PL011) */
-#define UART_DR     0x00
-#define UART_FR     0x18
-#define UART_CR     0x30
-#define UART_IMSC   0x3C
-#define UART_RIS    0x24
-#define UART_MISR   0x28
+#define UART_DR     0x000   /* Data Register */
+#define UART_RSR    0x004   /* Receive Status Register / Error Clear Register */
+#define UART_FR     0x018   /* Flag Register */
+#define UART_CR     0x030   /* Control Register */
+#define UART_IMSC   0x038   /* Interrupt Mask Set/Clear Register */
+#define UART_RIS    0x03C   /* Raw Interrupt Status Register */
+#define UART_MIS    0x040   /* Masked Interrupt Status Register */
+#define UART_ICR    0x044   /* Interrupt Clear Register */
 
 /* UART Flags Register (FR) flags */
 #define UART_FR_TXFE    (1 << 7)
@@ -29,6 +37,8 @@
 #define UART_CR_UARTEN  (1 << 0)
 #define UART_CR_TXE     (1 << 9)
 #define UART_CR_RXE     (1 << 8)
+#define UART_CR_CTSEn   (1 << 10)
+#define UART_CR_RTSDEn  (1 << 9)
 
 /* Function declarations */
 int printk(const char *fmt, ...);

@@ -39,17 +39,14 @@ static int next_pid = 1;
 /**
  * save_context - Save current CPU state to process PCB
  * @p: The process whose state should be saved
- *
- * Uses inline assembly to save all 30 general-purpose registers
- * (x0-x29) plus the link register (x30/LR) to the PCB.
  */
 static void save_context(process_t *p)
 {
     if (!p) return;
 
-    /* Save general purpose registers x0-x29 and LR (x30) */
+#if defined(__aarch64__)
+    uint64_t *r = p->regs;
     __asm__ volatile (
-        /* Save x0-x7 */
         "str x0, [%0, #0]\n"
         "str x1, [%0, #8]\n"
         "str x2, [%0, #16]\n"
@@ -58,7 +55,6 @@ static void save_context(process_t *p)
         "str x5, [%0, #40]\n"
         "str x6, [%0, #48]\n"
         "str x7, [%0, #56]\n"
-        /* Save x8-x15 */
         "str x8, [%0, #64]\n"
         "str x9, [%0, #72]\n"
         "str x10, [%0, #80]\n"
@@ -67,7 +63,6 @@ static void save_context(process_t *p)
         "str x13, [%0, #104]\n"
         "str x14, [%0, #112]\n"
         "str x15, [%0, #120]\n"
-        /* Save x16-x23 */
         "str x16, [%0, #128]\n"
         "str x17, [%0, #136]\n"
         "str x18, [%0, #144]\n"
@@ -76,7 +71,6 @@ static void save_context(process_t *p)
         "str x21, [%0, #168]\n"
         "str x22, [%0, #176]\n"
         "str x23, [%0, #184]\n"
-        /* Save x24-x29 and LR(x30) */
         "str x24, [%0, #192]\n"
         "str x25, [%0, #200]\n"
         "str x26, [%0, #208]\n"
@@ -84,13 +78,37 @@ static void save_context(process_t *p)
         "str x28, [%0, #224]\n"
         "str x29, [%0, #232]\n"
         "str x30, [%0, #240]\n"
-        /* Save current SP_EL0 to user_stack */
         "mrs x1, sp_el0\n"
         "str x1, [%0, #248]\n"
         :
-        : "r"(p->regs)
+        : "r"(r)
         : "x1", "memory"
     );
+#elif defined(__x86_64__)
+    uint64_t *r = p->regs;
+    __asm__ volatile (
+        "movq %%rax, 0(%0)\n\t"
+        "movq %%rbx, 8(%0)\n\t"
+        "movq %%rcx, 16(%0)\n\t"
+        "movq %%rdx, 24(%0)\n\t"
+        "movq %%rsi, 32(%0)\n\t"
+        "movq %%rdi, 40(%0)\n\t"
+        "movq %%rbp, 48(%0)\n\t"
+        "movq %%r8, 56(%0)\n\t"
+        "movq %%r9, 64(%0)\n\t"
+        "movq %%r10, 72(%0)\n\t"
+        "movq %%r11, 80(%0)\n\t"
+        "movq %%r12, 88(%0)\n\t"
+        "movq %%r13, 96(%0)\n\t"
+        "movq %%r14, 104(%0)\n\t"
+        "movq %%r15, 112(%0)\n\t"
+        "leaq 8(%%rsp), %%rax\n\t"
+        "movq %%rax, 120(%0)\n\t"
+        :
+        : "r"(r)
+        : "rax", "memory"
+    );
+#endif
 }
 
 /**
@@ -105,9 +123,10 @@ static void restore_context(process_t *p)
 {
     if (!p) return;
 
+#if defined(__aarch64__)
+    uint64_t *r = p->regs;
     __asm__ volatile (
         "mov x22, %0\n"
-        /* Restore x0-x7 using post-increment addressing */
         "ldr x0, [x22], #8\n"
         "ldr x1, [x22], #8\n"
         "ldr x2, [x22], #8\n"
@@ -116,7 +135,6 @@ static void restore_context(process_t *p)
         "ldr x5, [x22], #8\n"
         "ldr x6, [x22], #8\n"
         "ldr x7, [x22], #8\n"
-        /* Restore x8-x15 */
         "ldr x8, [x22], #8\n"
         "ldr x9, [x22], #8\n"
         "ldr x10, [x22], #8\n"
@@ -125,22 +143,16 @@ static void restore_context(process_t *p)
         "ldr x13, [x22], #8\n"
         "ldr x14, [x22], #8\n"
         "ldr x15, [x22], #8\n"
-        /* Restore x16-x18 */
         "ldr x16, [x22], #8\n"
         "ldr x17, [x22], #8\n"
         "ldr x18, [x22], #8\n"
-        /* Restore x19 */
         "ldr x19, [x22], #8\n"
-        /* Restore x20 */
         "ldr x20, [x22], #8\n"
-        /* Restore x21 via temp register x23 to avoid clobbering base pointer */
         "ldr x23, [x22], #8\n"
         "mov x21, x23\n"
-        /* Restore x22-x23 via temp register x23 */
         "ldr x23, [x22], #8\n"
         "mov x22, x23\n"
         "ldr x23, [x22], #8\n"
-        /* Restore x24-x29 and LR(x30) */
         "ldr x24, [x22], #8\n"
         "ldr x25, [x22], #8\n"
         "ldr x26, [x22], #8\n"
@@ -148,13 +160,50 @@ static void restore_context(process_t *p)
         "ldr x28, [x22], #8\n"
         "ldr x29, [x22], #8\n"
         "ldr x30, [x22], #8\n"
-        /* Restore user_stack (SP_EL0) from regs[30] slot */
         "ldr x1, [x22], #8\n"
         "msr sp_el0, x1\n"
         :
-        : "r"(p->regs)
+        : "r"(r)
         : "x1", "x19", "x20", "x21", "x22", "x23", "memory"
     );
+#elif defined(__x86_64__)
+    uint64_t *r = p->regs;
+    __asm__ volatile (
+        "pushq 112(%0)\n\t"
+        "pushq 104(%0)\n\t"
+        "pushq 96(%0)\n\t"
+        "pushq 88(%0)\n\t"
+        "pushq 80(%0)\n\t"
+        "pushq 72(%0)\n\t"
+        "pushq 64(%0)\n\t"
+        "pushq 56(%0)\n\t"
+        "pushq 40(%0)\n\t"
+        "pushq 32(%0)\n\t"
+        "pushq 48(%0)\n\t"
+        "pushq 16(%0)\n\t"
+        "pushq 24(%0)\n\t"
+        "pushq 8(%0)\n\t"
+        "pushq 0(%0)\n\t"
+        "popq %%rax\n\t"
+        "popq %%rbx\n\t"
+        "popq %%rdx\n\t"
+        "popq %%rcx\n\t"
+        "popq %%rbp\n\t"
+        "popq %%rsi\n\t"
+        "popq %%rdi\n\t"
+        "popq %%r8\n\t"
+        "popq %%r9\n\t"
+        "popq %%r10\n\t"
+        "popq %%r11\n\t"
+        "popq %%r12\n\t"
+        "popq %%r13\n\t"
+        "popq %%r14\n\t"
+        "popq %%r15\n\t"
+        :
+        : "r"(r)
+        : "memory"
+    );
+#endif
 }
 
 /**
@@ -197,41 +246,6 @@ static void setup_context(process_t *p)
 
     printk("[CTX] Setup context for pid %d ('%s'), entry=%p, stack=%p\n",
            p->pid, p->name, (void *)p->entry, p->user_stack);
-}
-
-/**
- * switch_stack - Actual assembly context switch
- * @prev: Pointer to previous process pointer (address of current_process)
- * @next: Next process to switch to
- *
- * This is the core context switch that:
- * 1. Saves current registers to prev->regs[]
- * 2. Restores registers from next->regs[]
- * 3. Switches stack pointers
- * 4. Returns to the caller
- */
-__attribute__((noreturn))
-static void switch_stack(process_t **prev_ptr, process_t *next)
-{
-    process_t *prev = *prev_ptr;
-    
-    /* Save current process state */
-    if (prev) {
-        save_context(prev);
-        prev->state = PROC_SLEEPING;
-        prev->user_stack = (uint64_t *)prev->regs[31];
-    }
-
-    /* Switch to next process */
-    if (next) {
-        /* Restore next process state */
-        restore_context(next);
-        next->state = PROC_RUNNING;
-        *prev_ptr = next;
-        current_process = next;
-        
-        printk("[CTX] Switched to pid %d ('%s')\n", next->pid, next->name);
-    }
 }
 
 /* ============================================================

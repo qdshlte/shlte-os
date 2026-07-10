@@ -11,15 +11,16 @@
 #include <shlte/string.h>
 
 /* ============================================================
- * UART Driver - ARM PL011 for virt machine
+ * UART Driver - ARM PL011 (aarch64) / 16550 COM1 (x86_64)
  * ============================================================ */
+
+#if defined(__aarch64__)
 
 /* Global UART base pointer (set by uart_init) */
 static volatile uint32_t *uart_base = NULL;
 
 /**
  * uart_read - Read a value from a UART register
- * @reg: Register offset in bytes
  */
 static inline uint32_t uart_read(volatile uint32_t *uart, int reg)
 {
@@ -28,95 +29,49 @@ static inline uint32_t uart_read(volatile uint32_t *uart, int reg)
 
 /**
  * uart_write - Write a value to a UART register
- * @uart: UART base pointer
- * @reg: Register offset in bytes
- * @val: Value to write
  */
 static inline void uart_write(volatile uint32_t *uart, int reg, uint32_t val)
 {
     uart[reg >> 2] = val;
 }
 
-/* PL011 UART register offsets */
-#define UART_DR     0x000   /* Data Register */
-#define UART_RSR    0x004   /* Receive Status Register */
-#define UART_ECR     0x00C   /* Error Clear Register */
-#define UART_FR     0x018   /* Flag Register */
-#define UART_CR     0x030   /* Control Register */
-#define UART_IMSC   0x03C   /* Interrupt Mask Set/Clear Register */
-#define UART_RIS    0x040   /* Raw Interrupt Status */
-#define UART_MIS    0x044   /* Masked Interrupt Status */
-#define UART_ICR    0x04C   /* Interrupt Clear Register */
+/* PL011 UART register offsets (defined in printk.h) */
 
-/* UART Flag Register (FR) bit masks */
-#define UART_FR_TXFE     (1 << 7)  /* Tx FIFO Empty */
-#define UART_FR_RXFE     (1 << 4)  /* Rx FIFO Empty */
-#define UART_FR_TXFF     (1 << 5)  /* Tx FIFO Full */
-#define UART_FR_RXFF     (1 << 6)  /* Rx FIFO Full */
-#define UART_FR_BUSY     (1 << 3)  /* UART Busy */
-
-/* UART Control Register (CR) bit masks */
-#define UART_CR_UARTEN   (1 << 0)  /* UART Enable */
-#define UART_CR_TXE      (1 << 9)  /* Tx Enable */
-#define UART_CR_RXE      (1 << 8)  /* Rx Enable */
-#define UART_CR_CTSEn    (1 << 10) /* CTS Enable */
-#define UART_CR_RTSDEn   (1 << 9)  /* RTS Delay Enable */
-
-/**
- * uart_init - Initialize UART for output
- * Must be called BEFORE any printk() usage
- */
 void uart_init(void)
 {
     uart_base = (volatile uint32_t *)UART_BASE;
 
-    /* Wait for UART busy */
     while (uart_read(uart_base, UART_FR) & UART_FR_BUSY) {
         /* Busy wait */
     }
 
-    /* Disable UART before configuring */
     uart_write(uart_base, UART_CR, 0);
-
-    /* Clear interrupts */
     uart_write(uart_base, UART_IMSC, 0);
     uart_write(uart_base, UART_ICR, 0x7FF);
-
-    /* Enable UART, TX, RX */
     uart_write(uart_base, UART_CR,
                UART_CR_UARTEN | UART_CR_TXE | UART_CR_RXE);
 }
 
-/**
- * uart_putc - Output a single character to UART
- */
 void uart_putc(char c)
 {
     if (!uart_base) {
         uart_init();
     }
 
-    /* Wait until Tx FIFO is not full */
     while (uart_read(uart_base, UART_FR) & UART_FR_TXFF) {
         /* Busy wait */
     }
 
-    /* Handle newline: send carriage return first */
     if (c == '\n') {
-        /* Wait again for Tx FIFO not full for CR */
         while (uart_read(uart_base, UART_FR) & UART_FR_TXFF) {
             /* Busy wait */
         }
         uart_write(uart_base, UART_DR, '\r');
     }
 
-    /* Send character */
     uart_write(uart_base, UART_DR, (uint32_t)c);
 }
 
-/**
- * uart_puts - Output a string to UART
- */
 void uart_puts(const char *s)
 {
     while (*s) {
@@ -125,16 +80,12 @@ void uart_puts(const char *s)
     }
 }
 
-/**
- * uart_getc - Read a character from UART (blocking)
- */
 char uart_getc(void)
 {
     if (!uart_base) {
         uart_init();
     }
 
-    /* Wait until Rx FIFO is not empty */
     while (uart_read(uart_base, UART_FR) & UART_FR_RXFE) {
         /* Busy wait */
     }
@@ -142,23 +93,107 @@ char uart_getc(void)
     return (char)uart_read(uart_base, UART_DR);
 }
 
-/**
- * uart_getc_nonblock - Try to read a character (non-blocking)
- * Returns -1 if no character available
- */
 int uart_getc_nonblock(void)
 {
     if (!uart_base) {
         uart_init();
     }
 
-    /* Check if Rx FIFO is empty */
     if (uart_read(uart_base, UART_FR) & UART_FR_RXFE) {
         return -1;
     }
 
     return (int)uart_read(uart_base, UART_DR);
 }
+
+#elif defined(__x86_64__)
+
+/* ============================================================
+ * x86_64 16550 UART (COM1 Serial Port at I/O 0x3F8)
+ * ============================================================ */
+
+/* COM1 I/O ports */
+#define COM1_PORT  UART_BASE
+
+static inline uint8_t inb(uint16_t port)
+{
+    uint8_t val;
+    __asm__ volatile("inb %1, %0" : "=a"(val) : "Nd"(port));
+    return val;
+}
+
+static inline void outb(uint16_t port, uint8_t val)
+{
+    __asm__ volatile("outb %0, %1" : : "a"(val), "Nd"(port));
+}
+
+void uart_init(void)
+{
+    /* Disable interrupts */
+    outb(COM1_PORT + 1, 0x00);
+
+    /* Set DLAB to configure baud rate */
+    outb(COM1_PORT + 3, 0x80);
+
+    /* 115200 baud: divisor = 1 */
+    outb(COM1_PORT + 0, 0x01);
+    outb(COM1_PORT + 1, 0x00);
+
+    /* 8N1, clear DLAB */
+    outb(COM1_PORT + 3, 0x03);
+
+    /* Enable FIFO, clear, 14-byte threshold */
+    outb(COM1_PORT + 2, 0xC7);
+
+    /* RTS/DSR set */
+    outb(COM1_PORT + 4, 0x0B);
+}
+
+void uart_putc(char c)
+{
+    /* Wait for transmitter holding register empty */
+    while (!(inb(COM1_PORT + 5) & 0x20)) {
+        /* Busy wait */
+    }
+
+    if (c == '\n') {
+        while (!(inb(COM1_PORT + 5) & 0x20)) {
+            /* Busy wait */
+        }
+        outb(COM1_PORT, '\r');
+    }
+
+    outb(COM1_PORT, (uint8_t)c);
+}
+
+void uart_puts(const char *s)
+{
+    while (*s) {
+        uart_putc(*s);
+        s++;
+    }
+}
+
+char uart_getc(void)
+{
+    /* Wait for data ready */
+    while (!(inb(COM1_PORT + 5) & 0x01)) {
+        /* Busy wait */
+    }
+
+    return (char)inb(COM1_PORT);
+}
+
+int uart_getc_nonblock(void)
+{
+    if (!(inb(COM1_PORT + 5) & 0x01)) {
+        return -1;
+    }
+
+    return (int)inb(COM1_PORT);
+}
+
+#endif /* __x86_64__ */
 
 /* ============================================================
  * Printf Implementation
@@ -188,6 +223,9 @@ static void format_number(char *buf, size_t bufsize, uint64_t value, int base, i
     char digits[] = "0123456789abcdef";
     char *p = buf;
     char *start = buf;
+
+    (void)bufsize;
+    (void)width;
 
     /* Handle 0 */
     if (value == 0 && precision <= 0) {
@@ -460,6 +498,10 @@ void panic(const char *msg)
     printk("System halted.\n\n");
 
     for (;;) {
+#if defined(__aarch64__)
         __asm__ volatile("wfi");
+#elif defined(__x86_64__)
+        __asm__ volatile("hlt");
+#endif
     }
 }

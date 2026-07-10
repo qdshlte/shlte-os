@@ -39,6 +39,10 @@ void syscall_handler(uint64_t syscall_num, uint64_t arg1, uint64_t arg2,
                      uint64_t arg3, uint64_t arg4, uint64_t arg5,
                      uint64_t arg6)
 {
+    (void)arg3;
+    (void)arg4;
+    (void)arg5;
+    (void)arg6;
     int ret = 0;
 
     switch (syscall_num) {
@@ -46,7 +50,13 @@ void syscall_handler(uint64_t syscall_num, uint64_t arg1, uint64_t arg2,
         printk("[SYSCALL] exit(%ld)\n", arg1);
         /* TODO: Terminate process */
         for (;;) {
+#if defined(__aarch64__)
             __asm__ volatile("wfi");
+#elif defined(__x86_64__)
+            __asm__ volatile("hlt");
+#else
+            __asm__ volatile("");
+#endif
         }
 
     case SYS_FORK:

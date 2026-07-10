@@ -16,6 +16,7 @@
  */
 void handle_exception(uint64_t esr, uint64_t far, uint64_t sp)
 {
+    (void)sp;
     uint64_t ec = (esr >> 26) & 0x3F;
 
     printk("[EXC] ESR=0x%lx, FAR=0x%lx\n", esr, far);
@@ -36,7 +37,7 @@ void handle_exception(uint64_t esr, uint64_t far, uint64_t sp)
         break;
     case 0x24:  /* IRQ */
         printk("[EXC] IRQ\n");
-        handle_irq();
+        handle_irq(0);
         break;
     case 0x25:  /* FIQ */
         printk("[EXC] FIQ (ignored)\n");
