@@ -277,7 +277,7 @@ int vsprintf(char *str, const char *fmt, va_list ap)
                 for (; shift >= 0; shift -= 4) {
                     if (i >= 1023) break;
                     char digit = (val >> shift) & 0xF;
-                    str[i++] = hex[digit];
+                    str[i++] = hex[(unsigned char)digit];
                 }
                 break;
             }

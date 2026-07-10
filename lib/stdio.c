@@ -41,6 +41,8 @@ int printf(const char *fmt, ...)
  */
 int fprintf(FILE *stream, const char *fmt, ...)
 {
+    (void)stream;
+    (void)fmt;
     printk("[STDIO] fprintf not fully implemented\n");
     return -1;
 }
@@ -50,6 +52,9 @@ int fprintf(FILE *stream, const char *fmt, ...)
  */
 char *fgets(char *s, int size, FILE *stream)
 {
+    (void)s;
+    (void)size;
+    (void)stream;
     printk("[STDIO] fgets not implemented\n");
     return NULL;
 }

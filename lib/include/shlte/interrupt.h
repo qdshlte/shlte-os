@@ -23,7 +23,7 @@ void interrupts_enable(void);
 void interrupts_disable(void);
 
 /* External declarations */
-void handle_irq(void);
+void handle_irq(uint64_t vector);
 void interrupt_init(void);
 
 /* IRQ dispatch table */

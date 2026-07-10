@@ -28,7 +28,6 @@
 #define PF_NG      (1 << 11)
 
 /* Page sizes */
-#define PAGE_SIZE       4096
 #define BLOCK_SIZE_2MB  (2 * 1024 * 1024)
 #define LARGE_BLOCK_1GB (1ULL << 30)
 

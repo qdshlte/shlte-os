@@ -1,12 +1,13 @@
 /*
- * linker.lds - Shlte OS ARM64 Kernel Linker Script
+ * linker_x86_64.lds - Shlte OS x86_64 Kernel Linker Script
  *
  * Layout:
- *   0x80000  - Entry point (boot.S)
- *   0x80000+ - Kernel code & data
+ *   0x100000  - Multiboot2 entry point (_start)
+ *   0x100000+ - Kernel code & data
  */
 
-OUTPUT_ARCH("aarch64")
+OUTPUT_FORMAT("elf64-x86-64")
+OUTPUT_ARCH("i386:x86-64")
 ENTRY(_start)
 
 PHDRS
@@ -17,11 +18,15 @@ PHDRS
 
 SECTIONS
 {
-    . = 0x80000;
+    . = 0x100000;
 
-    /* Text section: code (read + execute) */
+    /* Multiboot2 header (must be in first 8KB) */
+    .multiboot : {
+        KEEP(*(.multiboot))
+    } :text
+
+    /* Text section: code */
     .text : {
-        *(.text._start)
         *(.text*)
     } :text
 

@@ -272,7 +272,7 @@ void free_pages(uint64_t phys_addr, unsigned int order)
                 if (prev)
                     prev->next = curr->next;
                 else
-                    buddy.free_lists[coalesced] = curr->next;
+                    buddy.free_lists[coalesced] = (buddy_free_list_t *)curr->next;
                 break;
             }
             prev = curr;

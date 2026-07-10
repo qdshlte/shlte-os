@@ -1,69 +1,91 @@
 # ============================================================
-# Shlte OS - ARM64 Microkernel
-# A minimal Linux-like operating system
+# Shlte OS - ARM64 / x86_64 Microkernel
+# A minimal OS supporting multiple architectures
 # ============================================================
 
-# Cross-compilation toolchain
-CROSS_COMPILE ?= aarch64-linux-gnu-
-CC  := $(CROSS_COMPILE)gcc
-AS  := $(CROSS_COMPILE)as
-LD  := $(CROSS_COMPILE)ld
+# Target architecture (arm64 or x86_64)
+ARCH ?= arm64
+
+# Architecture-specific configuration
+ifeq ($(ARCH), arm64)
+    CROSS_COMPILE ?= aarch64-linux-gnu-
+    QEMU          := qemu-system-aarch64
+    QEMU_FLAGS    := -M virt -cpu cortex-a53 -m 512M -bios none -serial stdio -nographic
+    LD_SCRIPT     := linker.lds
+    BOOT_S        := boot/boot.S
+    CFLAGS_ARCH   := -march=armv8-a -mtune=cortex-a53
+    ASFLAGS_ARCH  := -march=armv8-a
+    KERNEL_LOAD   := 0x80000
+else ifeq ($(ARCH), x86_64)
+    CROSS_COMPILE ?=
+    QEMU          := qemu-system-x86_64
+    QEMU_FLAGS    := -m 512M -serial stdio -nographic -no-reboot
+    LD_SCRIPT     := linker_x86_64.lds
+    BOOT_S        := boot/boot_x86_64.S
+    CFLAGS_ARCH   := -mno-red-zone -mcmodel=kernel
+    ASFLAGS_ARCH  :=
+    KERNEL_LOAD   := 0x100000
+else
+    $(error Unsupported ARCH: $(ARCH). Supported: arm64, x86_64)
+endif
+
+# Toolchain
+CC      := $(CROSS_COMPILE)gcc
+AS      := $(CROSS_COMPILE)as
+LD      := $(CROSS_COMPILE)ld
 OBJCOPY := $(CROSS_COMPILE)objcopy
 OBJDUMP := $(CROSS_COMPILE)objdump
-AR  := $(CROSS_COMPILE)ar
 
-# Target architecture
-ARCH := arm64
+# Target
 TARGET := shlteos
 
 # Build directories
 BUILD_DIR  := build
-ISO_DIR    := $(BUILD_DIR)/iso
 KERNEL_BIN := $(BUILD_DIR)/kernel.bin
 KERNEL_ELF := $(BUILD_DIR)/kernel.elf
 
-# Compiler/Linker flags
+# Include paths
+INCLUDES := -I$(PWD)/arch/$(ARCH)/include \
+            -I$(PWD)/lib/include
+
+# Common compiler/linker flags
 CFLAGS := -std=c11 -ffreestanding -nostdlib -nostartfiles \
-          -march=armv8-a -mtune=cortex-a53 \
           -Wall -Wextra \
           -O2 -g \
           -DKERNEL_MODE \
           -fno-stack-protector -fno-pic \
-          -I$(PWD)/arch/$(ARCH)/include \
-          -I$(PWD)/lib/include
+          $(CFLAGS_ARCH) \
+          $(INCLUDES)
 
-ASFLAGS := -march=armv8-a \
+ASFLAGS := $(ASFLAGS_ARCH) \
            -I$(PWD)/boot/include \
            -I$(PWD)/arch/$(ARCH)/include
 
-LDFLAGS := -T $(PWD)/linker.lds \
+LDFLAGS := -T $(PWD)/$(LD_SCRIPT) \
            --nmagic \
-           -Ttext=0x80000
+           -z noexecstack \
+           -Ttext=$(KERNEL_LOAD)
 
 # Source files
-BOOT_SRC := $(wildcard boot/*.S) $(wildcard boot/*.c)
-ARCH_SRC := $(wildcard arch/$(ARCH)/*.S) $(wildcard arch/$(ARCH)/*.c) \
+BOOT_C   := $(wildcard boot/*.c)
+ARCH_C   := $(wildcard arch/$(ARCH)/*.c) \
             $(wildcard arch/$(ARCH)/mm/*.c) \
-            $(wildcard arch/$(ARCH)/interrupt/*.c) \
-            $(wildcard arch/$(ARCH)/fs/*.c)
-LIB_SRC  := $(wildcard lib/*.c)
+            $(wildcard arch/$(ARCH)/interrupt/*.c)
+LIB_C    := $(wildcard lib/*.c)
 
 # Object files
-BOOT_OBJ := $(patsubst boot/%.c,$(BUILD_DIR)/%.o,$(wildcard boot/*.c)) \
-            $(patsubst boot/%.S,$(BUILD_DIR)/%.o,$(wildcard boot/*.S))
-ARCH_OBJ := $(patsubst arch/$(ARCH)/%.c,$(BUILD_DIR)/%.o,$(wildcard arch/$(ARCH)/*.c)) \
-            $(patsubst arch/$(ARCH)/mm/%.c,$(BUILD_DIR)/mm/%.o,$(wildcard arch/$(ARCH)/mm/*.c)) \
-            $(patsubst arch/$(ARCH)/interrupt/%.c,$(BUILD_DIR)/interrupt/%.o,$(wildcard arch/$(ARCH)/interrupt/*.c)) \
-            $(patsubst arch/$(ARCH)/fs/%.c,$(BUILD_DIR)/fs/%.o,$(wildcard arch/$(ARCH)/fs/*.c)) \
-            $(patsubst arch/$(ARCH)/%.S,$(BUILD_DIR)/%.o,$(wildcard arch/$(ARCH)/*.S))
-LIB_OBJ  := $(patsubst lib/%.c,$(BUILD_DIR)/%.o,$(LIB_SRC))
+BOOT_C_OBJ  := $(patsubst boot/%.c, $(BUILD_DIR)/boot/%.o, $(BOOT_C))
+BOOT_S_NAME := $(notdir $(BOOT_S:.S=.o))
+BOOT_S_OBJ  := $(BUILD_DIR)/boot/$(BOOT_S_NAME)
+ARCH_C_OBJ  := $(patsubst arch/$(ARCH)/%.c, $(BUILD_DIR)/arch/%.o, $(ARCH_C))
+LIB_C_OBJ   := $(patsubst lib/%.c, $(BUILD_DIR)/lib/%.o, $(LIB_C))
 
-ALL_OBJS := $(BOOT_OBJ) $(ARCH_OBJ) $(LIB_OBJ)
+ALL_OBJS := $(BOOT_C_OBJ) $(BOOT_S_OBJ) $(ARCH_C_OBJ) $(LIB_C_OBJ)
 
-# ISO creation tools
-ISOCREATOR ?= genisoimage
+# Remove empty entries
+ALL_OBJS := $(filter %.o, $(ALL_OBJS))
 
-.PHONY: all kernel iso run clean help
+.PHONY: all kernel run debug clean help
 
 all: kernel
 
@@ -72,83 +94,73 @@ help:
 	@echo "====================="
 	@echo ""
 	@echo "Targets:"
-	@echo "  make [all]     - Build kernel and ISO image"
-	@echo "  make kernel    - Build kernel binary only"
-	@echo "  make iso       - Build bootable ISO image"
-	@echo "  make run       - Run in QEMU"
-	@echo "  make rootfs    - Build rootfs"
-	@echo "  make clean     - Clean build artifacts"
-	@echo "  make help      - Show this help"
+	@echo "  make [all]            - Build kernel (default ARCH=arm64)"
+	@echo "  make kernel           - Build kernel binary"
+	@echo "  make run              - Build & run in QEMU"
+	@echo "  make debug            - Build & run with GDB server on :1234"
+	@echo "  make clean            - Clean build artifacts"
+	@echo "  make help             - Show this help"
 	@echo ""
 	@echo "Options:"
-	@echo "  CROSS_COMPILE=<prefix> - Set cross-compiler prefix"
-	@echo "  DEBUG=1                - Enable debug symbols"
+	@echo "  ARCH=arm64|x86_64     - Select target architecture (default: arm64)"
+	@echo "  CROSS_COMPILE=<prefix> - Override cross-compiler prefix"
+	@echo "  DEBUG=1               - Enable debug symbols"
+	@echo ""
+	@echo "Examples:"
+	@echo "  make                          # Build for arm64"
+	@echo "  make ARCH=x86_64              # Build for x86_64"
+	@echo "  make run ARCH=x86_64          # Run x86_64 kernel in QEMU"
+	@echo "  make debug                    # Debug arm64 kernel with GDB"
 
 kernel: $(KERNEL_BIN)
 
 $(KERNEL_BIN): $(ALL_OBJS)
-	@echo "[LD] $@"
+	@echo "[LD] $@ ($(ARCH))"
 	$(LD) $(LDFLAGS) -o $(KERNEL_ELF) $^
 	$(OBJCOPY) -O binary $(KERNEL_ELF) $@
-	@echo "[OK] Kernel built: $@ ($(shell du -h $@ | cut -f1))"
+	@echo "[OK] Kernel built: $@ ($(shell du -h $@ 2>/dev/null | cut -f1))"
 
-# Compile .S (assembly) files
-$(BUILD_DIR)/%.o: boot/%.S
+# Assembly files (use CC for .S to get C preprocessor)
+$(BUILD_DIR)/boot/%.o: boot/%.S
 	@mkdir -p $(dir $@)
-	@echo "[AS] $<"
-	$(AS) $(ASFLAGS) -o $@ $<
+	@echo "[AS] $< ($(ARCH))"
+	$(CC) $(ASFLAGS) -c -o $@ $<
 
-$(BUILD_DIR)/%.o: arch/$(ARCH)/%.S
+# C files - lib ($(BUILD_DIR)/lib/%.o)
+$(BUILD_DIR)/lib/%.o: lib/%.c
 	@mkdir -p $(dir $@)
-	@echo "[AS] $<"
-	$(AS) $(ASFLAGS) -o $@ $<
-
-# Compile .c files
-$(BUILD_DIR)/%.o: boot/%.c
-	@mkdir -p $(dir $@)
-	@echo "[CC] $<"
+	@echo "[CC] $< ($(ARCH))"
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(BUILD_DIR)/%.o: arch/$(ARCH)/%.c
+# C files - arch ($(BUILD_DIR)/arch/%.o)
+$(BUILD_DIR)/arch/%.o: arch/$(ARCH)/%.c
 	@mkdir -p $(dir $@)
-	@echo "[CC] $<"
+	@echo "[CC] $< ($(ARCH))"
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(BUILD_DIR)/%.o: lib/%.c
+# C files - boot ($(BUILD_DIR)/boot/%.o)
+$(BUILD_DIR)/boot/%.o: boot/%.c
 	@mkdir -p $(dir $@)
-	@echo "[CC] $<"
+	@echo "[CC] $< ($(ARCH))"
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # ============================================================
-# ISO Image (placeholder - ARM64 uses kernel.bin directly)
+# ISO Image
 # ============================================================
 iso: kernel
-	@echo "[NOTE] ARM64: ISO not needed. Use 'make run' for QEMU."
+	@echo "[NOTE] ISO not needed. Use 'make run' for QEMU."
 
 # ============================================================
-# QEMU (ARM64 virt machine)
+# QEMU
 # ============================================================
 run: kernel
-	@echo "[QEMU] Starting Shlte OS on ARM64 virt machine..."
-	qemu-system-aarch64 \
-	    -M virt -cpu cortex-a53 \
-	    -m 512M \
-	    -bios none \
-	    -kernel $(KERNEL_BIN) \
-	    -serial stdio \
-	    -nographic
+	@echo "[QEMU] Starting Shlte OS ($(ARCH))..."
+	$(QEMU) $(QEMU_FLAGS) -kernel $(KERNEL_BIN)
 	@echo "[QEMU] Stopped."
 
 debug: kernel
-	@echo "[QEMU+GDB] Starting Shlte OS (waiting for gdb connect on :1234)..."
-	qemu-system-aarch64 \
-	    -M virt -cpu cortex-a53 \
-	    -m 512M \
-	    -bios none \
-	    -kernel $(KERNEL_BIN) \
-	    -serial stdio \
-	    -S -s \
-	    -nographic
+	@echo "[QEMU+GDB] Starting Shlte OS $(ARCH) (gdb on :1234)..."
+	$(QEMU) $(QEMU_FLAGS) -kernel $(KERNEL_BIN) -S -s
 
 # ============================================================
 # Clean

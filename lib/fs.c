@@ -20,6 +20,7 @@ int vfs_mount(const char *device, const char *mountpoint, const char *fstype)
  */
 ssize_t vfs_read(int fd, void *buf, size_t count)
 {
+    (void)buf;
     printk("[FS] read(fd=%d, count=%zu) - not implemented\n", fd, count);
     return -1;
 }
@@ -29,6 +30,7 @@ ssize_t vfs_read(int fd, void *buf, size_t count)
  */
 ssize_t vfs_write(int fd, const void *buf, size_t count)
 {
+    (void)buf;
     printk("[FS] write(fd=%d, count=%zu) - not implemented\n", fd, count);
     return -1;
 }

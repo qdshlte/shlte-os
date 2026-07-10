@@ -49,9 +49,11 @@ static inline void gic_write(vuint32_t *reg, uint32_t val)
 /**
  * handle_irq - Handle a hardware IRQ
  */
-void handle_irq(void)
+void handle_irq(uint64_t vector)
 {
     uint32_t irq_num;
+
+    (void)vector;
 
     /* Read IAR to get the highest priority pending IRQ */
     irq_num = gic_read(gicc + (GICC_IAR / 4));
