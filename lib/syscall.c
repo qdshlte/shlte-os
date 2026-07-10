@@ -79,10 +79,54 @@ int64_t syscall_handler(uint64_t syscall_num, uint64_t arg1, uint64_t arg2,
         ret = (int64_t)arg1;
         break;
 
-    case SYS_FORK:
-        printk("[SYSCALL] fork()\n");
-        ret = -1;  /* Not implemented yet */
+    case SYS_FORK: {
+        /* Fork: create a child process that is a copy of the parent.
+         * The child starts executing from the return of this syscall.
+         * Parent returns child PID, child returns 0. */
+
+        /* Allocate user memory for child */
+        size_t child_size = USER_STACK_SIZE + 0x10000;  /* 64KB stack + 64KB heap */
+        void *child_mem = kmalloc_simple(child_size);
+        if (!child_mem) {
+            printk("[SYSCALL] fork(): out of memory\n");
+            ret = -1;
+            break;
+        }
+
+        /* Copy parent's user space if available */
+        if (current_process && current_process->user_space) {
+            memcpy(child_mem, current_process->user_space, child_size);
+        }
+
+        /* Create child process */
+        process_t *child = create_process(
+            (void *)current_process->entry,
+            child_mem,
+            child_size,
+            current_process->name
+        );
+        if (!child) {
+            printk("[SYSCALL] fork(): cannot create process\n");
+            ret = -1;
+            break;
+        }
+
+        /* Copy parent's register state to child */
+        memcpy(child->regs, current_process->regs, sizeof(child->regs));
+        child->elr_el1  = current_process->elr_el1;
+        child->spsr_el1 = current_process->spsr_el1;
+        child->sp_el0   = current_process->sp_el0;
+
+        /* Child returns 0 */
+        child->regs[0] = 0;
+
+        /* Parent returns child's PID */
+        ret = child->pid;
+
+        printk("[SYSCALL] fork(): parent=%d, child=%d\n",
+               current_process->pid, child->pid);
         break;
+    }
 
     case SYS_READ: {
         /* arg1 = fd, arg2 = buf ptr, arg3 = max count */

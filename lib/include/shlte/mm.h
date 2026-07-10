@@ -49,4 +49,9 @@ extern char __bss_end[];
 /* Initialize memory manager */
 void mm_init(void);
 
+/* W^X + ASLR for user space */
+void mmu_setup_user_space(uint64_t code_start, uint64_t code_size,
+                           uint64_t data_start, uint64_t data_size);
+int  mmu_get_aslr_offset(void);
+
 #endif /* SHLTE_MM_H */

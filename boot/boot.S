@@ -537,6 +537,57 @@ resume_to_el0:
 
     eret                        /* -> EL0! */
 
+/*
+ * secondary_entry - Entry point for secondary CPUs (SMP)
+ *
+ * Called via PSCI CPU_ON.  MMU is off, caches unknown.
+ * Must set up everything from scratch, then jump to C.
+ */
+    .globl secondary_entry
+secondary_entry:
+    /* Find our CPU ID from MPIDR_EL1 */
+    mrs     x0, MPIDR_EL1
+    and     x0, x0, #0xFF       /* Aff0 = CPU ID */
+
+    /* Set up a temporary stack per CPU */
+    adrp    x1, secondary_stacks
+    add     x1, x1, :lo12:secondary_stacks
+    mov     x2, #8192            /* 8 KB per CPU */
+    madd    x1, x0, x2, x1      /* x1 = stacks + cpu_id * 8192 */
+    add     sp, x1, #8192
+
+    /* Set up exception vectors at EL1 */
+    adr     x1, exception_vector_table
+    msr     VBAR_EL1, x1
+
+    /* Mask interrupts initially */
+    msr     DAIFSet, #0x3
+
+    /* Enable FP/SIMD */
+    mov     x2, #(3 << 20)
+    msr     CPACR_EL1, x2
+
+    /* Enable MMU (uses the same page tables as CPU0) */
+    bl      mmu_enable
+
+    /* Save CPU ID across function calls */
+    mov     x19, x0
+
+    /* Call C handler */
+    mov     x0, x19
+    bl      smp_secondary_start
+
+    /* Should never return */
+    b       .
+
+/* ============================================================
+ * Secondary CPU stacks
+ * ============================================================ */
+    .section .bss.smp_stacks
+    .align 12
+    .space  65536                /* 64 KB for up to 8 CPUs */
+secondary_stacks:
+
 /* ============================================================
  * Embedded EL0 test program
  *

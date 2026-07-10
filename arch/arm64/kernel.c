@@ -19,6 +19,9 @@
 #include <shlte/virtio_gpu.h>
 #include <shlte/virtio_input.h>
 #include <shlte/gui.h>
+#include <shlte/pcie.h>
+#include <shlte/smp.h>
+#include <shlte/net.h>
 
 /* External PID set by syscall handler */
 extern int current_pid;
@@ -36,6 +39,19 @@ void kernel_main(uint64_t dtb_ptr)
     printk("[INIT] IPC... "); ipc_init(); printk("ok\n");
     printk("[INIT] MM... "); mm_init(); printk("ok\n");
     printk("[INIT] VFS... "); fs_init(); printk("ok\n");
+    printk("[INIT] PCI... ");
+    if (pci_init(0x3F000000ULL, 0, 0) > 0)
+        printk("ok\n");
+    else
+        printk("none\n");
+    printk("[INIT] SMP... ");
+    smp_init();
+    printk("ok (%d cpus)\n", smp_num_cpus());
+    printk("[INIT] NET... ");
+    if (net_init() == 0)
+        printk("ok\n");
+    else
+        printk("none\n");
 
     /* Initialize display and input */
     printk("[INIT] GPU... ");
@@ -86,6 +102,10 @@ void kernel_main(uint64_t dtb_ptr)
 
     current_process = init_proc;
     current_pid = 1;
+
+    /* Enable W^X for user space: code=RO+X, data=RW, stack guard */
+    mmu_setup_user_space(0x40200000ULL, 0x100000ULL,   /* Code: 1MB */
+                          0x40300000ULL, 0x100000ULL);  /* Data: 1MB */
 
     /* Welcome message to GUI terminal */
     gui_term_write("Welcome to Shlte OS v0.2\n");
