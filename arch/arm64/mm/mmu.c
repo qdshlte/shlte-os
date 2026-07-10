@@ -61,7 +61,7 @@ void mmu_enable(void)
 /* Translation tables */
 static uint64_t __attribute__((aligned(0x400000))) pt_l0[512];  /* L0: 512 x 512GB */
 static uint64_t __attribute__((aligned(0x4000)))   pt_l1[512];  /* L1: 512 x 1GB */
-static uint64_t __attribute__((aligned(0x4000)))   pt_l2_user[512]; /* L2: user region */
+uint64_t __attribute__((aligned(0x4000)))   pt_l2_user[512]; /* L2: user region */
 
 static int aslr_offset_mb = 32;  /* 32MB offset for ASLR (from some base) */
 
