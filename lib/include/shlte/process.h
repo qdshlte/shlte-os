@@ -26,6 +26,9 @@ typedef struct process {
     uint64_t stack[1024];  /* Kernel stack */
     uint64_t *user_stack;
     uint64_t regs[31];     /* Saved registers x0-x30 */
+    uint64_t elr_el1;      /* Saved exception return address */
+    uint64_t spsr_el1;     /* Saved processor state */
+    uint64_t sp_el0;       /* Saved user stack pointer */
     uint64_t entry;        /* Entry point */
     void *user_space;      /* User space memory */
     size_t user_space_size;
@@ -38,6 +41,7 @@ typedef struct process {
 /* Global process pointer (defined in process.c) */
 extern process_t *current_process;
 extern volatile int need_reschedule;
+extern int num_processes;
 
 /* Process management functions */
 int fork(void);
@@ -48,7 +52,11 @@ void init_process(void);
 void usr_init(void);
 process_t *create_process(void *entry, void *stack, size_t stack_size, const char *name);
 void schedule(void);
+process_t *pick_next(void);
 void context_switch(process_t *prev, process_t *next);
+
+/* Resume process from PCB — jumps to EL0, never returns */
+extern void resume_to_el0(uint64_t *context);
 
 /* Called from timer interrupt context */
 void timer_tick(void);

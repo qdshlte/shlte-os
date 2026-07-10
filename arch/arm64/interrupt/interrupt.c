@@ -97,8 +97,8 @@ void interrupt_init(void)
     /* Set interrupt priority mask (allow all priorities) */
     gic_write(gicc + (GICC_PMR / 4), 0xFF);
 
-    /* Enable GIC CPU interface */
-    gic_write(gicc + (GICC_CTLR / 4), 0x01);
+    /* Enable GIC CPU interface (both Group 0 and Group 1) */
+    gic_write(gicc + (GICC_CTLR / 4), 0x03);
 
     printk("[GIC] Interrupt controller initialized.\n");
 }

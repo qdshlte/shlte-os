@@ -286,6 +286,9 @@ parse_width:
         } else if (*fmt == 'h') {
             len_mod = LEN_SHORT;
             fmt++;
+        } else if (*fmt == 'z') {
+            len_mod = LEN_LONG;  /* size_t → unsigned long on AArch64 */
+            fmt++;
         }
 
         /* Parse format specifier */
@@ -300,7 +303,7 @@ parse_width:
             if (len_mod == LEN_LONGLONG)
                 value = (int64_t)va_arg(ap, int64_t);
             else if (len_mod == LEN_LONG)
-                value = (int32_t)va_arg(ap, int);
+                value = (int64_t)va_arg(ap, long);
             else
                 value = (int32_t)va_arg(ap, int);
             if ((int64_t)value < 0) {
@@ -318,7 +321,7 @@ parse_width:
             if (len_mod == LEN_LONGLONG)
                 value = va_arg(ap, uint64_t);
             else if (len_mod == LEN_LONG)
-                value = (uint32_t)va_arg(ap, int);
+                value = va_arg(ap, unsigned long);
             else
                 value = (uint32_t)va_arg(ap, int);
             format_number(num_buf, sizeof(num_buf), value, 10, 0, 0, flags, width, precision);
@@ -329,7 +332,7 @@ parse_width:
             if (len_mod == LEN_LONGLONG)
                 value = va_arg(ap, uint64_t);
             else if (len_mod == LEN_LONG)
-                value = (uint32_t)va_arg(ap, int);
+                value = va_arg(ap, unsigned long);
             else
                 value = (uint32_t)va_arg(ap, int);
             format_number(num_buf, sizeof(num_buf), value, 16, 0, 0, flags, width, precision);

@@ -21,10 +21,8 @@ BUILD_DIR  := build
 ISO_DIR    := $(BUILD_DIR)/iso
 KERNEL_BIN := $(BUILD_DIR)/kernel.bin
 KERNEL_ELF := $(BUILD_DIR)/kernel.elf
-ROOTFS_C   := $(BUILD_DIR)/rootfs_data.c
-ROOTFS_OBJ := $(BUILD_DIR)/rootfs_data.o
-INITRAMFS  := $(BUILD_DIR)/initramfs.cpio
 ISO_IMAGE  := shlte-os.iso
+USER_DIR   := user
 
 # Compiler/Linker flags
 CFLAGS := -std=c11 -ffreestanding -fno-builtin -nostdlib -nostartfiles \
@@ -33,6 +31,7 @@ CFLAGS := -std=c11 -ffreestanding -fno-builtin -nostdlib -nostartfiles \
           -O2 -g \
           -DKERNEL_MODE \
           -fno-stack-protector -fno-pic \
+          -mgeneral-regs-only \
           -I$(PWD)/arch/$(ARCH)/include \
           -I$(PWD)/lib/include
 
@@ -41,8 +40,7 @@ ASFLAGS := -march=armv8-a \
            -I$(PWD)/arch/$(ARCH)/include
 
 LDFLAGS := -T $(PWD)/linker.lds \
-           --nmagic \
-           -Ttext=0x80000
+           --nmagic
 
 # Source files
 BOOT_SRC := $(wildcard boot/*.S) $(wildcard boot/*.c)
@@ -60,174 +58,191 @@ ARCH_OBJ := $(patsubst arch/$(ARCH)/%.c,$(BUILD_DIR)/%.o,$(wildcard arch/$(ARCH)
             $(patsubst arch/$(ARCH)/%.S,$(BUILD_DIR)/%.o,$(wildcard arch/$(ARCH)/*.S))
 LIB_OBJ  := $(patsubst lib/%.c,$(BUILD_DIR)/%.o,$(LIB_SRC))
 
-ALL_OBJS := $(BOOT_OBJ) $(ARCH_OBJ) $(LIB_OBJ) $(ROOTFS_OBJ)
+ALL_OBJS := $(BOOT_OBJ) $(ARCH_OBJ) $(LIB_OBJ)
+
+# User-space programs (raw binaries)
+USER_S_SRCS := $(wildcard $(USER_DIR)/*.S)
+USER_C_SRCS := $(wildcard $(USER_DIR)/*.c)
+USER_BINS   := $(patsubst $(USER_DIR)/%.S,$(BUILD_DIR)/%.bin,$(USER_S_SRCS)) \
+               $(patsubst $(USER_DIR)/%.c,$(BUILD_DIR)/%.bin,$(USER_C_SRCS))
+USER_OBJS   := $(patsubst $(USER_DIR)/%.S,$(BUILD_DIR)/user_%.o,$(USER_S_SRCS)) \
+               $(patsubst $(USER_DIR)/%.c,$(BUILD_DIR)/user_%.o,$(USER_C_SRCS))
+
+# Disk image
+DISK_IMG := $(BUILD_DIR)/disk.img
 
 # ISO creation tools
 ISOCREATOR ?= genisoimage
 
-.PHONY: all kernel iso run run-noinitrd debug rootfs cpio disk clean help
+.PHONY: all kernel user-programs rootfs run debug disk clean help
 
-all: kernel cpio
+all: kernel
 
 help:
 	@echo "Shlte OS Build System"
 	@echo "====================="
 	@echo ""
 	@echo "Targets:"
-	@echo "  make [all]     - Build kernel + initramfs (default)"
+	@echo "  make [all]     - Build kernel (default)"
 	@echo "  make kernel    - Build kernel binary only"
-	@echo "  make rootfs    - Build embedded rootfs C source"
-	@echo "  make cpio      - Build initramfs CPIO archive"
-	@echo "  make disk      - Create spfs disk image (64MB)"
-	@echo "  make iso       - Build bootable ISO (kernel+rootfs+disk+grub)"
-	@echo "  make run       - Run in QEMU with initramfs + persistent disk"
+	@echo "  make rootfs    - Build kernel + user programs + disk image"
+	@echo "  make disk      - Create spfs disk image (64 MB, empty)"
+	@echo "  make run       - rootfs + run in QEMU"
+	@echo "  make debug     - rootfs + run in QEMU with GDB stub"
 	@echo "  make clean     - Clean build artifacts"
 	@echo "  make help      - Show this help"
-	@echo ""
-	@echo "Package manager:"
-	@echo "  sap install <file.deb>  - Install .deb packages"
-	@echo "  sap list                - List installed packages"
 	@echo ""
 	@echo "Options:"
 	@echo "  CROSS_COMPILE=<prefix> - Set cross-compiler prefix"
 	@echo "  DEBUG=1                - Enable debug symbols"
 
-kernel: $(KERNEL_BIN)
+# ============================================================
+# Compilation rules
+# ============================================================
 
-$(KERNEL_BIN): $(ALL_OBJS)
-	@echo "[LD] $@"
-	$(LD) $(LDFLAGS) -o $(KERNEL_ELF) $^
-	$(OBJCOPY) -O binary $(KERNEL_ELF) $@
-	@echo "[OK] Kernel built: $@ ($$(du -h $@ | cut -f1))"
-
-# Compile .S (assembly) files
+# Boot .S files
 $(BUILD_DIR)/%.o: boot/%.S
 	@mkdir -p $(dir $@)
 	@echo "[AS] $<"
 	$(AS) $(ASFLAGS) -o $@ $<
 
+# Arch .S files
 $(BUILD_DIR)/%.o: arch/$(ARCH)/%.S
 	@mkdir -p $(dir $@)
 	@echo "[AS] $<"
 	$(AS) $(ASFLAGS) -o $@ $<
 
-# Compile .c files
+# Boot .c files
 $(BUILD_DIR)/%.o: boot/%.c
 	@mkdir -p $(dir $@)
 	@echo "[CC] $<"
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+# Arch .c files
 $(BUILD_DIR)/%.o: arch/$(ARCH)/%.c
 	@mkdir -p $(dir $@)
 	@echo "[CC] $<"
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+# Arch/mm .c files
+$(BUILD_DIR)/mm/%.o: arch/$(ARCH)/mm/%.c
+	@mkdir -p $(dir $@)
+	@echo "[CC] $<"
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+# Arch/interrupt .c files
+$(BUILD_DIR)/interrupt/%.o: arch/$(ARCH)/interrupt/%.c
+	@mkdir -p $(dir $@)
+	@echo "[CC] $<"
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+# Lib .c files
 $(BUILD_DIR)/%.o: lib/%.c
 	@mkdir -p $(dir $@)
 	@echo "[CC] $<"
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # ============================================================
-# RootFS targets
+# User-space programs (raw binaries for rootfs)
 # ============================================================
-rootfs: $(ROOTFS_C)
 
-$(ROOTFS_C): scripts/mkrootfs.sh $(shell find rootfs/ -type f)
-	@echo "[ROOTFS] Building embedded rootfs..."
-	@mkdir -p $(BUILD_DIR)
-	scripts/mkrootfs.sh rootfs/ $@
+# User C compilation flags
+USER_CFLAGS := -std=c11 -ffreestanding -fno-builtin -fno-builtin-memcpy \
+               -fno-builtin-memset -fno-builtin-memmove \
+               -nostdlib -nostartfiles \
+               -march=armv8-a -mtune=cortex-a53 -O2 -fno-stack-protector \
+               -fno-pic -mgeneral-regs-only -I$(PWD)/user
 
-$(ROOTFS_OBJ): $(ROOTFS_C)
-	@echo "[CC] $(ROOTFS_C)"
-	$(CC) $(CFLAGS) -c -o $@ $<
+# Compile user C programs
+$(BUILD_DIR)/user_%.o: $(USER_DIR)/%.c
+	@mkdir -p $(dir $@)
+	@echo "[CC USER] $<"
+	$(CC) $(USER_CFLAGS) -c -o $@ $<
+
+# Assemble user programs into ELF relocatable objects
+$(BUILD_DIR)/user_%.o: $(USER_DIR)/%.S
+	@mkdir -p $(dir $@)
+	@echo "[AS] $<"
+	$(AS) $(ASFLAGS) -o $@ $<
+
+# Link as raw binary (no ELF headers, no relocations)
+$(BUILD_DIR)/%.bin: $(BUILD_DIR)/user_%.o
+	@echo "[BIN] $@"
+	$(LD) -Ttext=0 -o $(BUILD_DIR)/$*_temp.elf $<
+	$(OBJCOPY) -O binary $(BUILD_DIR)/$*_temp.elf $@
+	rm -f $(BUILD_DIR)/$*_temp.elf
+	@echo "[OK] User binary: $@ ($$(du -h $@ | cut -f1))"
+
+# Default init binary: prefer C shell + crt0 + string, fall back to assembly shell
+ifneq (,$(wildcard $(USER_DIR)/shell.c))
+INIT_BIN_OBJS := $(BUILD_DIR)/user_crt0.o $(BUILD_DIR)/user_string.o $(BUILD_DIR)/user_shell.o
+else
+INIT_BIN_OBJS := $(BUILD_DIR)/user_init.o
+endif
+
+$(BUILD_DIR)/init.bin: $(INIT_BIN_OBJS)
+	@echo "[BIN] $@ (C shell)"
+	$(LD) -Ttext=0 -o $(BUILD_DIR)/init_temp.elf $(INIT_BIN_OBJS)
+	$(OBJCOPY) -O binary $(BUILD_DIR)/init_temp.elf $@
+	rm -f $(BUILD_DIR)/init_temp.elf
+	@echo "[OK] User binary: $@ ($$(du -h $@ | cut -f1))"
+
+# Convert user binary to embeddable ELF object for linker
+$(BUILD_DIR)/init_embedded.o: $(BUILD_DIR)/init.bin
+	@echo "[EMBED] $@"
+	# First convert binary to ELF .data section
+	$(OBJCOPY) -I binary -O elf64-littleaarch64 -B aarch64 $< $@
+	# Then rename the section to .rootfs
+	$(OBJCOPY) --rename-section .data=.rootfs,contents,alloc,load,readonly,data $@
+	@echo "[OK] Embedded rootfs object: $@"
+
+user-programs: $(USER_BINS)
+
+# Kernel with embedded rootfs
+KERNEL_EMBED_OBJS := $(BUILD_DIR)/init_embedded.o
+
+kernel: $(KERNEL_BIN)
+
+$(KERNEL_BIN): $(ALL_OBJS) $(KERNEL_EMBED_OBJS)
+	@echo "[LD] $@"
+	$(LD) $(LDFLAGS) -o $(KERNEL_ELF) $(ALL_OBJS) $(KERNEL_EMBED_OBJS)
+	$(OBJCOPY) -O binary $(KERNEL_ELF) $@
+	@echo "[OK] Kernel built: $@ ($$(du -h $@ | cut -f1))"
 
 # ============================================================
-# CPIO initramfs archive
-# ============================================================
-cpio: $(INITRAMFS)
-
-$(INITRAMFS): scripts/mkcpio.sh $(shell find rootfs/ -type f)
-	@echo "[CPIO] Building initramfs CPIO archive..."
-	@mkdir -p $(BUILD_DIR)
-	scripts/mkcpio.sh rootfs/ $@
-
-# ============================================================
-# Disk image
+# Disk image with rootfs (optional — for SPFS/virtio-blk)
 # ============================================================
 disk:
 	@echo "[DISK] Creating spfs disk image..."
 	@mkdir -p $(BUILD_DIR)
-	scripts/mkdisk.sh $(BUILD_DIR)/disk.img 64
-	@echo "[OK] Disk image ready: $(BUILD_DIR)/disk.img"
+	scripts/mkdisk.sh $(DISK_IMG) 64
+	@echo "[OK] Disk image ready: $(DISK_IMG)"
 
-# ============================================================
-# ISO Image
-# ============================================================
-ISO_OUTPUT_DIR := $(HOME)/P/iso
-
-iso: kernel cpio disk
-	@echo "[ISO] Building bootable ISO image..."
-	@mkdir -p $(ISO_DIR)/boot
-	@mkdir -p $(ISO_OUTPUT_DIR)
-	# Add disk image to ISO staging
-	cp $(BUILD_DIR)/disk.img $(ISO_DIR)/boot/disk.img
-	scripts/mkiso.sh \
-	    $(ISO_DIR) \
-	    $(KERNEL_BIN) \
-	    $(INITRAMFS) \
-	    boot/grub/grub.cfg \
-	    $(ISO_OUTPUT_DIR)/shlte-os.iso
-	@echo "[OK] ISO ready: $(ISO_OUTPUT_DIR)/shlte-os.iso"
-	@echo "      Size: $$(du -h $(ISO_OUTPUT_DIR)/shlte-os.iso | cut -f1)"
-	@echo ""
-	@echo "Run with:"
-	@echo "  qemu-system-aarch64 -M virt -cpu cortex-a53 -m 512M \\"
-	@echo "    -kernel $(KERNEL_BIN) -initrd $(INITRAMFS) \\"
-	@echo "    -drive file=$(BUILD_DIR)/disk.img,if=none,id=hd0 \\"
-	@echo "    -device virtio-blk-device,drive=hd0 -serial stdio -nographic"
+rootfs: kernel user-programs
+	@echo "[ROOTFS] Building rootfs disk image..."
+	@mkdir -p $(BUILD_DIR)
+	scripts/mkdisk.sh $(DISK_IMG) 64 $(USER_BINS)
+	@echo "[OK] Rootfs ready: $(DISK_IMG)"
 
 # ============================================================
 # QEMU (ARM64 virt machine)
 # ============================================================
-run: kernel cpio disk
-	@echo "[QEMU] Starting Shlte OS (kernel + initrd + disk)..."
+run: kernel
+	@echo "[QEMU] Starting Shlte OS..."
 	@echo "       Kernel: $(KERNEL_BIN)"
-	@echo "       Initrd: $(INITRAMFS)"
-	@echo "       Disk:   $(BUILD_DIR)/disk.img"
 	qemu-system-aarch64 \
 	    -M virt -cpu cortex-a53 \
 	    -m 512M \
-	    -bios none \
 	    -kernel $(KERNEL_BIN) \
-	    -initrd $(INITRAMFS) \
-	    -drive file=$(BUILD_DIR)/disk.img,if=none,id=hd0 \
-	    -device virtio-blk-device,drive=hd0 \
-	    -serial stdio \
 	    -nographic
 	@echo "[QEMU] Stopped."
 
-run-noinitrd: kernel disk
-	@echo "[QEMU] Starting Shlte OS (no initrd, with disk)..."
-	qemu-system-aarch64 \
-	    -M virt -cpu cortex-a53 \
-	    -m 512M \
-	    -bios none \
-	    -kernel $(KERNEL_BIN) \
-	    -drive file=$(BUILD_DIR)/disk.img,if=none,id=hd0 \
-	    -device virtio-blk-device,drive=hd0 \
-	    -serial stdio \
-	    -nographic
-	@echo "[QEMU] Stopped."
-
-debug: kernel cpio disk
+debug: kernel
 	@echo "[QEMU+GDB] Starting Shlte OS (waiting for gdb connect on :1234)..."
 	qemu-system-aarch64 \
 	    -M virt -cpu cortex-a53 \
 	    -m 512M \
-	    -bios none \
 	    -kernel $(KERNEL_BIN) \
-	    -initrd $(INITRAMFS) \
-	    -serial stdio \
 	    -S -s \
 	    -nographic
 

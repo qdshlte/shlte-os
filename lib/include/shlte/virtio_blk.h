@@ -7,7 +7,7 @@
 
 #include <shlte/types.h>
 
-#define VIRTIO_BLK_MMIO_BASE  0x0C000000  /* QEMU virt default for first virtio-mmio */
+#define VIRTIO_BLK_MMIO_BASE  0x0A000000  /* QEMU virt 8.2+: first virtio-mmio at 0x0A000000 */
 #define VIRTIO_BLK_IRQ        48          /* First virtio-mmio IRQ (32 + 16) */
 
 #define SECTOR_SIZE          512

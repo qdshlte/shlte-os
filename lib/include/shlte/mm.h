@@ -19,6 +19,9 @@ void kfree(void *ptr);
 void *krealloc(void *ptr, size_t new_size);
 size_t kmalloc_usable(void *ptr);
 
+/* Simple bump allocator (early boot + user-space) */
+void *kmalloc_simple(unsigned long size);
+
 /* Buddy system page allocator */
 int buddy_init(uintptr_t start, size_t total_pages);
 int alloc_pages(unsigned int order, uint64_t *phys_addr);

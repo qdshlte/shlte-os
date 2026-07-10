@@ -38,11 +38,11 @@ void timer_handler(int irq_num)
     (void)irq_num;
     jiffies++;
 
+    /* Call process tick for preemptive scheduling */
+    timer_tick();
+
     /* Reset the timer compare value for the next 100 Hz tick */
     __asm__ volatile("msr CNTP_TVAL_EL0, %0" : : "r"(timer_freq / TIMER_HZ));
-
-    /* Notify the scheduler that a tick has elapsed */
-    timer_tick();
 }
 
 /**
@@ -55,32 +55,23 @@ void timer_init(void)
 {
     /* Read the counter frequency */
     __asm__ volatile("mrs %0, CNTFRQ_EL0" : "=r"(timer_freq));
-    printk("[TIMER] Counter frequency: %lu Hz\n", timer_freq);
-
-    if (timer_freq == 0) {
+    if (timer_freq == 0)
         timer_freq = 62500000;  /* Default QEMU virt frequency */
-        printk("[TIMER] Using default frequency: %lu Hz\n", timer_freq);
-    }
 
     /* Set the compare value for 100 Hz */
     __asm__ volatile("msr CNTP_TVAL_EL0, %0" : : "r"(timer_freq / TIMER_HZ));
 
     /* Enable the timer, leave IMASK clear so interrupts are enabled */
     __asm__ volatile("msr CNTP_CTL_EL0, %0" : : "r"(CNTP_CTL_ENABLE));
-
-    printk("[TIMER] Timer initialized at %lu Hz\n", TIMER_HZ);
 }
 
 /**
  * timer_register_irq - Register the timer handler with the GIC
- *
- * Must be called after interrupt_init() has set up the GIC.
  */
 void timer_register_irq(void)
 {
     irq_register(TIMER_IRQ, timer_handler);
     irq_enable(TIMER_IRQ);
-    printk("[TIMER] Registered IRQ %d\n", TIMER_IRQ);
 }
 
 /**

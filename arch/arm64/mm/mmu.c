@@ -14,15 +14,11 @@
 #define PT_TABLE     0x3
 #define PT_VALID     0x1
 
-/* Memory attributes */
-#define MT_DEVICE    0x00  /* Device type 0 (nGnRE) */
-#define MT_NORMAL_NC 0x04  /* Normal, Non-Cacheable */
-#define MT_NORMAL_WT 0x08  /* Normal, Write-Through */
-#define MT_NORMAL_WB 0x0C  /* Normal, Write-Back */
-
-#define ATTR_DEVICE     ((MT_DEVICE << 2) | (1 << 0))
-#define ATTR_NORMAL_NC  ((MT_NORMAL_NC << 2) | (1 << 0))
-#define ATTR_NORMAL_WB  ((MT_NORMAL_WB << 2) | (1 << 0))
+/* Memory attributes — indices into MAIR_EL1 */
+#define ATTR_DEVICE     0   /* MAIR[7:0]   = Device-nGnRE */
+#define ATTR_NORMAL_NC  1   /* MAIR[15:8]  = Normal Non-Cacheable */
+#define ATTR_NORMAL_WT  2   /* MAIR[23:16] = Normal Write-Through */
+#define ATTR_NORMAL_WB  3   /* MAIR[31:24] = Normal Write-Back */
 
 #define PF_VALID   (1 << 0)
 #define PF_AF      (1 << 1)
@@ -64,7 +60,8 @@ void mmu_enable(void)
 
 /* Translation tables (physically contiguous, aligned) */
 static uint64_t __attribute__((aligned(0x400000))) pt_table_l0[512];
-static uint64_t __attribute__((aligned(0x4000))) pt_table_l1[512];
+static uint64_t __attribute__((aligned(0x4000)))   pt_table_l1[512];
+static uint64_t __attribute__((aligned(0x4000)))   pt_table_l2[512];  /* L2 for 2MB blocks */
 
 /*
  * Map 2MB pages (level 1 block)
@@ -73,8 +70,10 @@ static uint64_t __attribute__((aligned(0x4000))) pt_table_l1[512];
 static uint64_t pt_block_2mb(uint64_t phys_addr, int mem_attr)
 {
     uint64_t entry = phys_addr & ~0x1FFFFF;  /* Align to 2MB boundary */
-    entry |= ((uint64_t)(mem_attr & 0xF)) << 2;
-    entry |= (1ULL << 0) | (1ULL << 1) | (1ULL << 10) | (3ULL << 8); /* V|AF|IB|SH=inner*/
+    /* AttrIndx = mem_attr (0..7), placed in bits[4:2] */
+    entry |= ((uint64_t)(mem_attr & 0x7)) << 2;
+    /* Block descriptor: V=1(bit0), type=block(bit1=0), AF(bit10), SH=inner(9:8), AP=EL0-RW(bit6) */
+    entry |= (1ULL << 0) | (1ULL << 10) | (3ULL << 8) | (1ULL << 6);
     return entry;
 }
 
@@ -99,18 +98,43 @@ void mmu_init(uint64_t dtb_phys)
     }
 
     /*
-     * Build L1 block mappings (2MB pages).
-     * Map first 1GB of physical memory.
-     *
-     * L0[0] -> L1 table
+     * L0[0] -> L1 table.
+     * L1 entries are 1GB blocks (simplest possible mapping).
      */
     pt_table_l0[0] = (uint64_t)&pt_table_l1 | PT_TABLE;
 
-    /* Map 0x0 - 0x40000000 (1GB) with 2MB blocks */
-    for (i = 0; i < 512; i++) {
-        uint64_t phys = (uint64_t)i * BLOCK_SIZE_2MB;
-        pt_table_l1[i] = pt_block_2mb(phys, ATTR_NORMAL_WB);
+    /*
+     * L1[0]: 1GB Device block at phys 0x0 (UART, GIC, virtio MMIO)
+     * L1[1]: 1GB Normal WB block at phys 0x40000000 (DRAM, kernel)
+     *
+     * For 1GB L1 block descriptor:
+     *   bits[1:0] = 01 (block)
+     *   bits[47:30] = output address[47:30]
+     *   bit[10] = AF
+     *   bits[9:8] = SH (0b11 = inner shareable)
+     *   bits[7:6] = AP (0b01 = EL0-RW)
+     *   bits[4:2] = AttrIndx
+     */
+    pt_table_l1[0] = (0x00000000ULL & ~((1ULL << 30) - 1))
+                   | ((uint64_t)ATTR_DEVICE << 2)
+                   | (1ULL << 10) | (3ULL << 8) | (1ULL << 6)
+                   | (1ULL << 0);  /* bit1=0 → block */
+    pt_table_l1[1] = (0x40000000ULL & ~((1ULL << 30) - 1))
+                   | ((uint64_t)ATTR_NORMAL_WB << 2)
+                   | (1ULL << 10) | (3ULL << 8) | (1ULL << 6)
+                   | (1ULL << 0);  /* bit1=0 → block */
+
+    /*
+     * Configure MAIR_EL1. Attr0=Device, Attr3=Normal-WB.
+     */
+    {
+        uint64_t mair;
+        mair  = (0x04ULL << 0);   /* Attr0: Device-nGnRE */
+        mair |= (0xFFULL << 24);  /* Attr3: Normal, Inner/Outer Write-Back */
+        __asm__ volatile("msr mair_el1, %0" : : "r"(mair));
     }
+
+    /* TCR_EL1 left at reset — T0SZ=0 is fine for our 48-bit VAs */
 
     /* Load TTBR0 (EL0/EL1 translation table base) */
     __asm__ volatile(
@@ -128,43 +152,13 @@ void mmu_init(uint64_t dtb_phys)
         ::: "memory"
     );
 
-    /* Enable MMU and caches */
-    uint64_t sctlr;
+    /* Enable MMU only — write exact value, not read-modify-write */
     __asm__ volatile(
-        "mrs %0, sctlr_el1\n\t"
-        "orr %0, %0, #(1 << 0)\n\t"   /* MMU enable */
-        "orr %0, %0, #(1 << 1)\n\t"   /* Data cache enable */
-        "orr %0, %0, #(1 << 12)\n\t"  /* Instruction cache enable */
-        "msr sctlr_el1, %0\n\t"
+        "mov x0, #1\n\t"
+        "msr sctlr_el1, x0\n\t"
         "isb\n\t"
-        : "=r" (sctlr)
-        :
-        : "memory"
+        ::: "x0", "memory"
     );
-
-    /* Full cache maintenance by set/way after enabling caches */
-    uint64_t clidr;
-    __asm__ volatile("mrs %0, CLIDR_EL1" : "=r"(clidr));
-    unsigned int level = (clidr >> 24) & 0x7;  /* Max cache level in CLIDR */
-    for (unsigned int l = 0; l <= level; l++) {
-        unsigned int ctype = (clidr >> (l * 3)) & 0x7;
-        if (ctype == 0) continue;  /* No cache at this level */
-        uint64_t csselr = l << 1;
-        __asm__ volatile("msr CSSELR_EL1, %0" : : "r"(csselr));
-        __asm__ volatile("isb");
-        uint64_t ccsidr;
-        __asm__ volatile("mrs %0, CCSIDR_EL1" : "=r"(ccsidr));
-        unsigned int num_sets = ((ccsidr >> 13) & 0x7FFF) + 1;
-        unsigned int num_ways = ((ccsidr >> 3) & 0x3FF) + 1;
-        (void)(ccsidr & 0x7);  /* line size encoding - not needed for set/way op */
-        for (unsigned int w = 0; w < num_ways; w++) {
-            for (unsigned int s = 0; s < num_sets; s++) {
-                uint64_t cisw = (w << 30) | (l << 1) | s;
-                __asm__ volatile("dc cisw, %0" : : "r"(cisw));
-            }
-        }
-    }
-    __asm__ volatile("dsb sy");
 
     printk("[MMU] Enabled, TTBR0=%p\n", (void*)&pt_table_l0);
 }

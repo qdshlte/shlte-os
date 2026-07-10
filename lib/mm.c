@@ -473,41 +473,49 @@ void mm_init(void)
     /* Clear bitmap */
     memset(buddy.bitmap, 0, buddy.bitmap_words * sizeof(uint64_t));
 
-    /* Initialize order-0 free list */
-    buddy.free_lists[0] = (buddy_free_list_t *)pool_start;
-    for (size_t i = 0; i < pool_pages - 1; i++) {
-        buddy.free_lists[0][i].next = pool_start + (i + 1) * PAGE_SIZE;
-    }
-    buddy.free_lists[0][pool_pages - 1].next = 0;
+    /* Initialize all free lists to NULL */
+    for (int o = 0; o < MAX_ORDER_BITS; o++)
+        buddy.free_lists[o] = NULL;
 
-    buddy.initialized = 1;
-
-    /* Build higher-order free lists by coalescing adjacent pages */
+    /* Build free lists: add all pages as the largest possible blocks.
+     * Process from highest order down to order 1.
+     * Order 0 is not in the free list — order-0 allocations
+     * come from splitting order-1 blocks. */
     {
-        uint64_t total_pages = buddy.pool_pages;
-        for (unsigned int order = 1; order < MAX_ORDER_BITS; order++) {
-            buddy.free_lists[order] = NULL;
-            uint64_t block_size = 1UL << order;
-            for (uint64_t i = 0; i + block_size <= total_pages; i += block_size) {
-                /* Check if all pages in this block are free */
-                int all_free = 1;
-                for (uint64_t j = i; j < i + block_size && all_free; j++) {
-                    if (buddy_is_allocated(j)) all_free = 0;
-                }
-                if (all_free) {
-                    /* Add to free list */
-                    buddy_free_list_t *node = (buddy_free_list_t *)(buddy.pool_start + i * PAGE_SIZE);
-                    node->next = (uint64_t)buddy.free_lists[order];
-                    buddy.free_lists[order] = node;
-                    /* Mark all as allocated so they can't be double-freed */
-                    for (uint64_t j = i; j < i + block_size; j++) {
-                        buddy_set_allocated(j, 1);
-                    }
-                    i += block_size - 1;
-                }
+        uint64_t offset = 0;
+        uint64_t remaining = pool_pages;
+
+        while (remaining > 0) {
+            /* Find the largest block size that fits */
+            unsigned int order = MAX_ORDER_BITS - 1;
+            while (order > 0) {
+                uint64_t block_size = 1UL << order;
+                if (block_size <= remaining)
+                    break;
+                order--;
             }
+            if (order == 0) {
+                /* Single page at the end — this is fine,
+                 * the order-0 list was built above */
+                break;
+            }
+
+            uint64_t block_size = 1UL << order;
+            uint64_t phys = pool_start + offset * PAGE_SIZE;
+            buddy_free_list_t *node = (buddy_free_list_t *)phys;
+            node->next = (uint64_t)buddy.free_lists[order];
+            buddy.free_lists[order] = node;
+
+            /* Mark pages as in-use (owned by this free-list block) */
+            for (uint64_t j = 0; j < block_size; j++)
+                buddy_set_allocated(offset + j, 1);
+
+            offset += block_size;
+            remaining -= block_size;
         }
     }
+
+    buddy.initialized = 1;
 
     printk("[MM] Buddy pool: 0x%lx (%zu pages, %zu MB)\n",
            pool_start, pool_pages, pool_pages * PAGE_SIZE / (1024 * 1024));

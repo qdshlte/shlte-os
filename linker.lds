@@ -2,8 +2,8 @@
  * linker.lds - Shlte OS ARM64 Kernel Linker Script
  *
  * Layout:
- *   0x80000  - Entry point (boot.S)
- *   0x80000+ - Kernel code & data
+ *   0x40080000  - Entry point (boot.S) — matches QEMU aarch64 virt load addr
+ *   0x40080000+ - Kernel code & data
  */
 
 OUTPUT_ARCH("aarch64")
@@ -18,7 +18,7 @@ PHDRS
 
 SECTIONS
 {
-    . = 0x80000;
+    . = 0x40080000;
 
     /* Text section: code */
     .text : {
@@ -32,6 +32,15 @@ SECTIONS
     .rodata : {
         *(.rodata*)
         *(.got*)
+    } :rodata
+
+    . = ALIGN(4096);
+
+    /* Embedded rootfs binaries (user programs) */
+    .rootfs : {
+        __rootfs_start = .;
+        *(.rootfs*)
+        __rootfs_end = .;
     } :rodata
 
     . = ALIGN(4096);

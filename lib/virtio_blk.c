@@ -64,7 +64,7 @@
 /* ------------------------------------------------------------------ */
 typedef volatile uint32_t vuint32_t;
 
-static vuint32_t * const mmio = (vuint32_t *)VIRTIO_BLK_MMIO_BASE;
+static vuint32_t *mmio = (vuint32_t *)VIRTIO_BLK_MMIO_BASE;
 
 static inline uint32_t virtio_read(uint32_t offset)
 {
@@ -226,32 +226,32 @@ int virtio_blk_init(void)
 {
     uint32_t magic, version, device_id, status;
     uint32_t host_features;
+    int found = 0;
 
-    printk("[VIRTIO] Probing virtio-mmio device at 0x%lx\n",
-           (unsigned long)VIRTIO_BLK_MMIO_BASE);
+    /* Probe up to 16 virtio-mmio slots across a wider address range */
+    for (uintptr_t base = VIRTIO_BLK_MMIO_BASE;
+         base < VIRTIO_BLK_MMIO_BASE + 32 * 0x200;
+         base += 0x200) {
+        vuint32_t * const mmio_slot = (vuint32_t *)base;
 
-    /* ---- Check magic value ---- */
-    magic = virtio_read(VIRTIO_MMIO_MAGIC);
-    if (magic != 0x74726976UL) {  /* "virt" */
-        printk("[VIRTIO] Bad magic: 0x%08x (expected 0x74726976)\n", magic);
-        return VIRTIO_BLK_ERR;
+        magic = mmio_slot[VIRTIO_MMIO_MAGIC >> 2];
+        if (magic != 0x74726976UL)
+            continue;
+
+        version = mmio_slot[VIRTIO_MMIO_VERSION >> 2];
+        device_id = mmio_slot[VIRTIO_MMIO_DEVICE_ID >> 2];
+
+        if (device_id == 2) {
+            mmio = mmio_slot;
+            found = 1;
+            break;
+        }
     }
 
-    /* ---- Check version (legacy = 2) ---- */
-    version = virtio_read(VIRTIO_MMIO_VERSION);
-    if (version != 2) {
-        printk("[VIRTIO] Unsupported version: %u (need 2)\n", version);
+    if (!found) {
+        printk("[VIRTIO] No block device found\n");
         return VIRTIO_BLK_ERR;
     }
-
-    /* ---- Check device ID ---- */
-    device_id = virtio_read(VIRTIO_MMIO_DEVICE_ID);
-    if (device_id != 2) {  /* 2 = block device */
-        printk("[VIRTIO] Not a block device (device_id=%u)\n", device_id);
-        return VIRTIO_BLK_ERR;
-    }
-
-    printk("[VIRTIO] Found virtio-blk device\n");
 
     /* ---- Device initialization sequence ---- */
     /* 1. Reset device */
